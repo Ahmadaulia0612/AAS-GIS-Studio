@@ -13,10 +13,25 @@ class QueryBuilder:
         "MapServer"
     )
 
-    def build(self, bhumi_url):
+    def build(self, url):
+
+        # ===========================
+        # Jika sudah URL BIG
+        # ===========================
+
+        if (
+            "kspservices.big.go.id" in url
+            and "MapServer" in url
+            and "query" in url
+        ):
+            return url
+
+        # ===========================
+        # Jika URL BHUMI
+        # ===========================
 
         xmin, ymin, xmax, ymax = URLParser(
-            bhumi_url
+            url
         ).bbox()
 
         return (
