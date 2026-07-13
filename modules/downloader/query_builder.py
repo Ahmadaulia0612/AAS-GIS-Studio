@@ -15,24 +15,15 @@ class QueryBuilder:
 
     def build(self, url):
 
-        # ===========================
-        # Jika sudah URL BIG
-        # ===========================
-
+        # Jika user langsung paste URL BIG
         if (
-            "kspservices.big.go.id" in url
-            and "MapServer" in url
-            and "query" in url
+            "MapServer" in url
+            and "/query?" in url
         ):
             return url
 
-        # ===========================
-        # Jika URL BHUMI
-        # ===========================
-
-        xmin, ymin, xmax, ymax = URLParser(
-            url
-        ).bbox()
+        # Jika user paste URL BHUMI
+        xmin, ymin, xmax, ymax = URLParser(url).bbox()
 
         return (
             f"{self.BIG_SERVER}/"
