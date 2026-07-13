@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual Environment
+.venv/
+
+# PyInstaller
+build/
+dist/
+
+# Output SHP
+output/
+
+# VSCode
+.vscode/
+
+# Windows
+Thumbs.db
+Desktop.ini
