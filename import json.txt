@@ -1,0 +1,41 @@
+import json
+from base64 import b64decode
+from Crypto.Cipher import AES
+from Crypto.Hash import MD5
+
+
+PASSWORD = b"s3CRetCR1pT0"
+
+
+def evp_bytes_to_key(password, salt, key_len=32, iv_len=16):
+    d = b""
+    prev = b""
+
+    while len(d) < key_len + iv_len:
+        prev = MD5.new(prev + password + salt).digest()
+        d += prev
+
+    return d[:key_len], d[key_len:key_len + iv_len]
+
+
+def decrypt_cryptojs(ciphertext):
+
+    raw = b64decode(ciphertext)
+
+    if raw[:8] != b"Salted__":
+        raise Exception("Not OpenSSL")
+
+    salt = raw[8:16]
+    encrypted = raw[16:]
+
+    key, iv = evp_bytes_to_key(PASSWORD, salt)
+
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+
+    data = cipher.decrypt(encrypted)
+
+    pad = data[-1]
+
+    data = data[:-pad]
+
+    return json.loads(data.decode())
