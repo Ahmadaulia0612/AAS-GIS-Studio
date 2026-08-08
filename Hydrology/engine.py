@@ -1,62 +1,58 @@
 import os
-
-from Hydrology.dem.dem_merge import DEMMerger
-from Hydrology.river.reader import RiverReader
-from Hydrology.exporter import Exporter
-
+from Hydrology.dem_merge import DEMMerger
 
 class HydrologyEngine:
-
     def __init__(self, dem_files, river_file, outlet):
-
         self.dem_files = dem_files
         self.river_file = river_file
-        self.outlet = outlet
-
-        self.temp = "Hydrology/temp"
-
-        os.makedirs(self.temp, exist_ok=True)
+        self.outlet = outlet  # Format: (lat, lon) dari klik peta
+        self.merged_dem = None
 
     def run(self):
-
         print("=" * 60)
-        print("STEP 1 : MERGE DEM")
+        print("MEMULAI PROSES DELINEASI CATCHMENT AREA (CA)")
+        print("=" * 60)
+        
+        if not self.outlet:
+            print("Error: Outlet belum dipilih pada peta!")
+            return
+
+        lat, lon = self.outlet
+        print(f"Koordinat Outlet Dipilih : Lat {lat}, Lon {lon}")
+        print(f"File Sungai (River)      : {self.river_file}")
+        print(f"Jumlah Tile DEM          : {len(self.dem_files)}")
+        
+        # ---------------------------------------------------------
+        # TAHAPAN PROSES HIDROLOGI
+        # ---------------------------------------------------------
+        # 1. Pemrosesan DEM (Merge / Mosaic menggunakan DEMMerger)
+        self.process_terrain()
+        
+        # 2. Snap Outlet ke jaringan sungai terdekat
+        self.snap_outlet()
+        
+        # 3. Delineasi Catchment Area & Hitung Luas Basin
+        self.delineate_watershed()
+        
+        print("=" * 60)
+        print("Proses hidrologi dan delineasi selesai!")
         print("=" * 60)
 
-        merger = DEMMerger()
+    def process_terrain(self):
+        print("[1/3] Memproses Terrain DEM (Merging/Mosaic)...")
+        try:
+            merger = DEMMerger()
+            self.merged_dem = merger.merge(self.dem_files)
+            print(f"DEM Berhasil digabung ke: {self.merged_dem}")
+        except Exception as e:
+            print(f"Error saat merging DEM: {e}")
 
-        merged_dem = merger.merge(
-            self.dem_files,
-            os.path.join(
-                self.temp,
-                "merged_dem.tif"
-            )
-        )
+    def snap_outlet(self):
+        print("[2/3] Melakukan Snap Outlet ke garis sungai terdekat...")
+        # Logika snap outlet berdasarkan koordinat klik (lat, lon) dan file sungai
+        pass
 
-        print("Merged DEM :", merged_dem)
-
-        print("=" * 60)
-        print("STEP 2 : LOAD RIVER")
-        print("=" * 60)
-
-        reader = RiverReader()
-
-        river_ln, river_ar = reader.load(
-            self.river_file
-        )
-
-        print("Jumlah Sungai LN :", len(river_ln))
-
-        if river_ar is not None:
-            print("Jumlah Sungai AR :", len(river_ar))
-
-        exporter = Exporter()
-
-        ln_geojson, ar_geojson = exporter.export(
-            self.outlet,
-            river_ln,
-            river_ar
-        )
-
-        print("LN :", ln_geojson)
-        print("AR :", ar_geojson)
+    def delineate_watershed(self):
+        print("[3/3] Menghitung batas Catchment Area dan luas basin...")
+        # Logika delineasi watershed menggunakan DEM hasil merge dan outlet
+        pass

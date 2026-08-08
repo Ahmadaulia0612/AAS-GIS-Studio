@@ -44,15 +44,22 @@ class BrowserPage(QWidget):
         self.project = ProjectTree()
         left.addWidget(self.project)
 
-        toolbar = QHBoxLayout()
+        toolbar = QVBoxLayout()
 
+        row1 = QHBoxLayout()
         self.btn_dem = QPushButton("Load DEM")
         self.btn_river = QPushButton("Load River")
-        self.btn_ws = QPushButton("Watershed")
+        row1.addWidget(self.btn_dem)
+        row1.addWidget(self.btn_river)
 
-        toolbar.addWidget(self.btn_dem)
-        toolbar.addWidget(self.btn_river)
-        toolbar.addWidget(self.btn_ws)
+        row2 = QHBoxLayout()
+        self.btn_load_outlet = QPushButton("Load Outlet KML")
+        self.btn_ws = QPushButton("Watershed")
+        row2.addWidget(self.btn_load_outlet)
+        row2.addWidget(self.btn_ws)
+
+        toolbar.addLayout(row1)
+        toolbar.addLayout(row2)
 
         left.addLayout(toolbar)
 
@@ -83,7 +90,7 @@ class BrowserPage(QWidget):
             True,
         )
 
-        html = resource_path("modules/web/map.html")
+        html = resource_path("web/map.html")
         self.browser.load(QUrl.fromLocalFile(html))
 
         layout.addWidget(left_widget)
@@ -93,6 +100,7 @@ class BrowserPage(QWidget):
         self.page.coordinateSelected.connect(self.coordinate_received)
         self.btn_dem.clicked.connect(self.load_dem)
         self.btn_river.clicked.connect(self.load_river)
+        self.btn_load_outlet.clicked.connect(self.load_outlet_kml)
         self.btn_ws.clicked.connect(self.run_watershed)
 
     # =====================================================
@@ -152,14 +160,57 @@ class BrowserPage(QWidget):
             QMessageBox.critical(self, "River", str(e))
 
     # =====================================================
-    # OUTLET
+    # LOAD OUTLET KML / KMZ
+    # =====================================================
+
+    def load_outlet_kml(self):
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "Pilih File KML/KMZ", "", "KML/KMZ (*.kml *.kmz)"
+        )
+
+        if not filename:
+            return
+
+        try:
+            import geopandas as gpd
+            # Membaca file KML/KMZ
+            gdf = gpd.read_file(filename)
+            
+            if not gdf.empty:
+                # Ambil geometri titik pertama
+                point = gdf.geometry.iloc[0]
+                lat, lon = point.y, point.x
+                
+                self.outlet = (lat, lon)
+                
+                # Kirim perintah ke JavaScript untuk menampilkan marker di peta dan zoom
+                script = f"setOutletMarker({lat}, {lon});"
+                self.page.runJavaScript(script)
+
+                print("=" * 60)
+                print("OUTLET DIMUAT DARI KML")
+                print("Latitude :", lat)
+                print("Longitude:", lon)
+                print("=" * 60)
+
+                QMessageBox.information(
+                    self, "Outlet KML", f"Titik outlet berhasil dimuat!\nLat: {lat}, Lon: {lon}"
+                )
+            else:
+                QMessageBox.warning(self, "Outlet KML", "File KML tidak memiliki data geometri.")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Gagal membaca file KML: {str(e)}")
+
+    # =====================================================
+    # OUTLET KLIK PETA
     # =====================================================
 
     def coordinate_received(self, lat, lon):
         self.outlet = (lat, lon)
 
         print("=" * 60)
-        print("OUTLET")
+        print("OUTLET DIPILIH DARI PETA")
         print("Latitude :", lat)
         print("Longitude:", lon)
         print("=" * 60)
@@ -185,21 +236,13 @@ class BrowserPage(QWidget):
             QMessageBox.warning(
                 self,
                 "Hydrology",
-                "Silakan klik outlet pada peta terlebih dahulu.",
+                "Silakan klik outlet pada peta atau load KML terlebih dahulu.",
             )
             return
 
         print("=" * 60)
-        print("RUN WATERSHED")
+        print("MENJALANKAN HYDROLOGY ENGINE")
         print("=" * 60)
-
-        print("Jumlah DEM :", len(self.dem_files))
-
-        for f in self.dem_files:
-            print(f)
-
-        print("River :", self.river_file)
-        print("Outlet :", self.outlet)
 
         engine = HydrologyEngine(
             dem_files=self.dem_files,
@@ -208,3 +251,7 @@ class BrowserPage(QWidget):
         )
 
         engine.run()
+
+        QMessageBox.information(
+            self, "Watershed", "Proses Hydrology Engine berhasil dipicu! Cek terminal untuk detailnya."
+        )

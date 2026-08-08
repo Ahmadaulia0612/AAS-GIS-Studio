@@ -1,102 +1,38 @@
-from urllib.parse import parse_qs
-
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QObject, Signal, Slot, QUrl
 from PySide6.QtWebEngineCore import QWebEnginePage
+from PySide6.QtWebChannel import QWebChannel
+from resource import resource_path
 
+class MapBridge(QObject):
+    coordinateSelected = Signal(float, float)
+
+    @Slot(float, float)
+    def receiveOutletCoords(self, lat, lng):
+        print(f"Bridge menerima koordinat: {lat}, {lng}")
+        self.coordinateSelected.emit(lat, lng)
 
 class MapPage(QWebEnginePage):
-
     coordinateSelected = Signal(float, float)
 
     def __init__(self, parent=None):
-
         super().__init__(parent)
+        
+        # Setup Jembatan komunikasi
+        self.bridge = MapBridge()
+        self.channel = QWebChannel()
+        self.channel.registerObject("backend", self.bridge)
+        self.setWebChannel(self.channel)
 
-    # =======================================================
-    # Python -> JavaScript
-    # =======================================================
+        # Sambungkan signal
+        self.bridge.coordinateSelected.connect(self.coordinateSelected.emit)
 
-    def loadRiver(self, geojson: str):
+    def loadRiver(self, geojsonStr):
+        # Menggunakan format string JSON yang aman
+        import json
+        safe_json = json.dumps(geojsonStr)
+        self.runJavaScript(f"loadRiver({safe_json});")
 
-        geojson = (
-            geojson
-            .replace("\\", "\\\\")
-            .replace("`", "\\`")
-        )
-
-        self.runJavaScript(
-            f"""
-            loadRiver(`{geojson}`);
-            """
-        )
-
-    def addRiver(self, geojson: str):
-
-        geojson = (
-            geojson
-            .replace("\\", "\\\\")
-            .replace("`", "\\`")
-        )
-
-        self.runJavaScript(
-            f"""
-            addRiver(`{geojson}`);
-            """
-        )
-
-    def loadWatershed(self, geojson: str):
-
-        geojson = (
-            geojson
-            .replace("\\", "\\\\")
-            .replace("`", "\\`")
-        )
-
-        self.runJavaScript(
-            f"""
-            loadWatershed(`{geojson}`);
-            """
-        )
-
-    # =======================================================
-    # JavaScript -> Python
-    # =======================================================
-
-    def acceptNavigationRequest(
-        self,
-        url,
-        nav_type,
-        isMainFrame
-    ):
-
-        if url.scheme() == "aas":
-
-            try:
-
-                params = parse_qs(url.query())
-
-                lat = float(params["lat"][0])
-                lon = float(params["lon"][0])
-
-                print("=" * 40)
-                print("Outlet Selected")
-                print(lat)
-                print(lon)
-                print("=" * 40)
-
-                self.coordinateSelected.emit(
-                    lat,
-                    lon
-                )
-
-            except Exception as e:
-
-                print(e)
-
-            return False
-
-        return super().acceptNavigationRequest(
-            url,
-            nav_type,
-            isMainFrame
-        )
+    def addRiver(self, geojsonStr):
+        import json
+        safe_json = json.dumps(geojsonStr)
+        self.runJavaScript(f"addRiver({safe_json});")
