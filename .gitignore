@@ -19,3 +19,16 @@ output/
 # Windows
 Thumbs.db
 Desktop.ini
+
+Hydrology/temp/
+*.tif
+*.tiff
+*.zip
+*.rar
+*.gdb
+*.gdb/*
+*.gpkg
+*.shp
+*.dbf
+*.shx
+*.prj
