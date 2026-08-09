@@ -55,8 +55,9 @@
         });
 
         var outletMarker = null;
-        var demBoundaryLayer = null;
+        var demBoundsLayer = null; // Layer untuk kotak batas DEM
         var riverLayerGroup = L.layerGroup().addTo(map);
+        var watershedLayerGroup = L.layerGroup().addTo(map);
 
         // 5. Logika Klik Peta (Pilih Outlet & Kirim ke Python)
         map.on('click', function(e) {
@@ -71,9 +72,6 @@
 
             if (backend) {
                 backend.receiveOutletCoords(lat, lng);
-                console.log("Koordinat dikirim ke Python -> Lat: " + lat + ", Lon: " + lng);
-            } else {
-                console.log("Gagal kirim: Backend Python belum terhubung.");
             }
         });
 
@@ -83,29 +81,33 @@
                 map.removeLayer(outletMarker);
             }
             outletMarker = L.marker([lat, lng], {icon: redPinIcon}).addTo(map);
-            map.setView([lat, lng], 15); // Otomatis zoom ke titik outlet
-            console.log("Outlet marker diset dari KML pada posisi: " + lat + ", " + lng);
+            map.setView([lat, lng], 15);
         }
 
-        // 7. Fungsi Boundary DEM
-        function showDEMBoundary(bounds, tileName) {
-            if (demBoundaryLayer !== null) {
-                map.removeLayer(demBoundaryLayer);
+        // 7. Fungsi untuk Menampilkan Kotak Batas DEM di Peta
+        function loadDemBounds(geojson_data) {
+            try {
+                if (demBoundsLayer !== null) {
+                    map.removeLayer(demBoundsLayer);
+                }
+
+                demBoundsLayer = L.geoJSON(geojson_data, {
+                    style: {
+                        color: "#ff7800",      // Garis oranye
+                        weight: 2,
+                        opacity: 0.8,
+                        fillColor: "#ff7800",
+                        fillOpacity: 0.15     // Transparan agar peta latar tetap terlihat
+                    }
+                }).addTo(map);
+
+                if (demBoundsLayer.getBounds().isValid()) {
+                    map.fitBounds(demBoundsLayer.getBounds());
+                }
+                console.log("Kotak batas DEM berhasil dimuat ke peta.");
+            } catch (e) {
+                console.error("Error loading DEM bounds:", e);
             }
-
-            demBoundaryLayer = L.rectangle(bounds, {
-                color: "#ff7800",
-                weight: 2,
-                fillColor: "#ff7800",
-                fillOpacity: 0.15
-            }).addTo(map);
-
-            demBoundaryLayer.bindTooltip("<b>DEM:</b> " + tileName, {
-                permanent: true, 
-                direction: "center"
-            }).openTooltip();
-
-            map.fitBounds(bounds);
         }
 
         // 8. Fungsi Load River (Garis Sungai Biru)
@@ -127,7 +129,6 @@
                 if (geoJsonLayer.getBounds().isValid()) {
                     map.fitBounds(geoJsonLayer.getBounds());
                 }
-                console.log("River loaded successfully");
             } catch (e) {
                 console.error("Error loading river:", e);
             }
@@ -145,14 +146,40 @@
                     }
                 });
                 riverLayerGroup.addLayer(geoJsonLayer);
-                console.log("River polygon added successfully");
             } catch (e) {
                 console.error("Error adding river polygon:", e);
             }
         }
 
-        function loadWatershed(geojsonStr) {
-            console.log("Load Watershed:", geojsonStr);
+        // 9. Fungsi Load Watershed Poligon ke Peta
+        function loadWatershed(data) {
+            try {
+                watershedLayerGroup.clearLayers();
+
+                var watershedLayer = L.geoJSON(data, {
+                    style: {
+                        color: "#2e7d32",
+                        weight: 2,
+                        fillColor: "#4caf50",
+                        fillOpacity: 0.4
+                    },
+                    onEachFeature: function (feature, layer) {
+                        layer.bindPopup("<b>Catchment Area (Watershed)</b><br>Status: Berhasil Delineasi");
+                        layer.on('click', function() {
+                            layer.openPopup();
+                        });
+                    }
+                });
+
+                watershedLayerGroup.addLayer(watershedLayer);
+                
+                if (watershedLayer.getBounds().isValid()) {
+                    map.fitBounds(watershedLayer.getBounds());
+                }
+                console.log("Watershed polygon loaded successfully to map");
+            } catch (e) {
+                console.error("Error loading watershed polygon:", e);
+            }
         }
     </script>
 </body>

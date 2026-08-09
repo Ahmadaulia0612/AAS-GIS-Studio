@@ -1,3 +1,6 @@
+import os
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu"
+
 import sys
 
 from PySide6.QtWidgets import QApplication

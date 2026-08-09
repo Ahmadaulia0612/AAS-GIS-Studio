@@ -1,4 +1,5 @@
 import os
+import json
 
 from PySide6.QtCore import QUrl
 from PySide6.QtWebEngineCore import QWebEngineSettings
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
 from app.map_page import MapPage
 from app.widget.project_tree import ProjectTree
 from Hydrology.engine import HydrologyEngine
+from Hydrology.worker import HydrologyWorker
 from resource import resource_path
 
 
@@ -26,6 +28,7 @@ class BrowserPage(QWidget):
         self.dem_files = []
         self.river_file = None
         self.outlet = None
+        self.worker = None
 
         self.init_ui()
 
@@ -104,7 +107,7 @@ class BrowserPage(QWidget):
         self.btn_ws.clicked.connect(self.run_watershed)
 
     # =====================================================
-    # LOAD DEM
+    # LOAD DEM (DENGAN OTOMATIS TAMPILKAN BOUNDS DI PETA)
     # =====================================================
 
     def load_dem(self):
@@ -115,13 +118,42 @@ class BrowserPage(QWidget):
         if not files:
             return
 
-        self.dem_files = files
+        existing_names = [os.path.basename(f) for f in self.dem_files]
+        new_files = [f for f in files if os.path.basename(f) not in existing_names]
+        
+        if not new_files:
+            QMessageBox.warning(self, "DEM", "File DEM tersebut sudah ada di daftar project.")
+            return
 
-        for f in files:
+        self.dem_files.extend(new_files)
+
+        for f in new_files:
             self.project.add_dem(os.path.basename(f))
 
+        try:
+            import rasterio, geopandas as gpd
+            from shapely.geometry import box
+            
+            bounds = [rasterio.open(f).bounds for f in self.dem_files]
+            polygon = box(
+                min(b.left for b in bounds), min(b.bottom for b in bounds),
+                max(b.right for b in bounds), max(b.top for b in bounds)
+            )
+            
+            os.makedirs("output", exist_ok=True)
+            bounds_path = os.path.abspath("output/dem_bounds.geojson")
+            gpd.GeoDataFrame(geometry=[polygon], crs="EPSG:4326").to_file(bounds_path, driver="GeoJSON")
+            
+            with open(bounds_path, "r") as f:
+                geojson_data = json.load(f)
+            
+            script = f"loadDemBounds({json.dumps(geojson_data)});"
+            self.page.runJavaScript(script)
+        except Exception as e:
+            print("Gagal memuat batas DEM ke peta:", e)
+
         QMessageBox.information(
-            self, "DEM", f"{len(files)} file DEM berhasil dipilih."
+            self, "DEM", f"{len(new_files)} file DEM baru berhasil ditambahkan."
         )
 
     # =====================================================
@@ -137,7 +169,6 @@ class BrowserPage(QWidget):
             return
 
         self.river_file = filename
-
         self.project.add_river(os.path.basename(filename))
 
         try:
@@ -173,25 +204,16 @@ class BrowserPage(QWidget):
 
         try:
             import geopandas as gpd
-            # Membaca file KML/KMZ
             gdf = gpd.read_file(filename)
             
             if not gdf.empty:
-                # Ambil geometri titik pertama
                 point = gdf.geometry.iloc[0]
                 lat, lon = point.y, point.x
                 
                 self.outlet = (lat, lon)
                 
-                # Kirim perintah ke JavaScript untuk menampilkan marker di peta dan zoom
                 script = f"setOutletMarker({lat}, {lon});"
                 self.page.runJavaScript(script)
-
-                print("=" * 60)
-                print("OUTLET DIMUAT DARI KML")
-                print("Latitude :", lat)
-                print("Longitude:", lon)
-                print("=" * 60)
 
                 QMessageBox.information(
                     self, "Outlet KML", f"Titik outlet berhasil dimuat!\nLat: {lat}, Lon: {lon}"
@@ -209,14 +231,8 @@ class BrowserPage(QWidget):
     def coordinate_received(self, lat, lon):
         self.outlet = (lat, lon)
 
-        print("=" * 60)
-        print("OUTLET DIPILIH DARI PETA")
-        print("Latitude :", lat)
-        print("Longitude:", lon)
-        print("=" * 60)
-
     # =====================================================
-    # WATERSHED
+    # WATERSHED (MENGGUNAKAN THREAD AGAR BEBAS NOT RESPONDING)
     # =====================================================
 
     def run_watershed(self):
@@ -241,17 +257,51 @@ class BrowserPage(QWidget):
             return
 
         print("=" * 60)
-        print("MENJALANKAN HYDROLOGY ENGINE")
+        print("MENJALANKAN HYDROLOGY ENGINE (BACKGROUND THREAD)")
         print("=" * 60)
 
-        engine = HydrologyEngine(
+        self.btn_ws.setEnabled(False)
+        self.btn_ws.setText("Memproses...")
+
+        self.worker = HydrologyWorker(
             dem_files=self.dem_files,
             river_file=self.river_file,
-            outlet=self.outlet,
+            outlet=self.outlet
         )
+        self.worker.progress_signal.connect(self.on_watershed_progress)
+        self.worker.finished_signal.connect(self.on_watershed_finished)
+        self.worker.error_signal.connect(self.on_watershed_error)
+        
+        self.worker.start()
 
-        engine.run()
+    def on_watershed_progress(self, percent, message):
+        print(f"[Progress {percent}%]: {message}")
 
-        QMessageBox.information(
-            self, "Watershed", "Proses Hydrology Engine berhasil dipicu! Cek terminal untuk detailnya."
+    def on_watershed_finished(self, message, duration, area_km2):
+        self.btn_ws.setEnabled(True)
+        self.btn_ws.setText("Watershed")
+
+        watershed_geojson_path = os.path.join("output", "watershed.geojson")
+        if os.path.exists(watershed_geojson_path):
+            with open(watershed_geojson_path, "r") as f:
+                geo_content = f.read()
+            
+            safe_json = json.dumps(json.loads(geo_content))
+            script = f"loadWatershed({safe_json});"
+            self.page.runJavaScript(script)
+        else:
+            print("File watershed.geojson tidak ditemukan di folder output!")
+
+        # Menampilkan pesan pop-up lengkap dengan Luas CA dan Waktu Pengerjaan
+        info_text = (
+            f"{message}\n\n"
+            f"📐 Luas Catchment Area (CA) : {area_km2:.3f} km²\n"
+            f"⏱️ Waktu pengerjaan          : {duration:.2f} detik"
         )
+        QMessageBox.information(self, "Watershed Selesai", info_text)
+
+    def on_watershed_error(self, err_msg):
+        self.btn_ws.setEnabled(True)
+        self.btn_ws.setText("Watershed")
+
+        QMessageBox.critical(self, "Error Hidrologi", f"Terjadi kesalahan saat proses:\n{err_msg}")
