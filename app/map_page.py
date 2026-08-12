@@ -1,14 +1,12 @@
-from PySide6.QtCore import QObject, Signal, Slot, QUrl
+from PySide6.QtCore import QObject, Signal, Slot
 from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWebChannel import QWebChannel
-from resource import resource_path
+import json
 
 class MapBridge(QObject):
     coordinateSelected = Signal(float, float)
-
     @Slot(float, float)
     def receiveOutletCoords(self, lat, lng):
-        print(f"Bridge menerima koordinat: {lat}, {lng}")
         self.coordinateSelected.emit(lat, lng)
 
 class MapPage(QWebEnginePage):
@@ -16,23 +14,15 @@ class MapPage(QWebEnginePage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        
-        # Setup Jembatan komunikasi
         self.bridge = MapBridge()
         self.channel = QWebChannel()
         self.channel.registerObject("backend", self.bridge)
         self.setWebChannel(self.channel)
-
-        # Sambungkan signal
         self.bridge.coordinateSelected.connect(self.coordinateSelected.emit)
 
-    def loadRiver(self, geojsonStr):
-        # Menggunakan format string JSON yang aman
-        import json
-        safe_json = json.dumps(geojsonStr)
-        self.runJavaScript(f"loadRiver({safe_json});")
-
-    def addRiver(self, geojsonStr):
-        import json
-        safe_json = json.dumps(geojsonStr)
-        self.runJavaScript(f"addRiver({safe_json});")
+    # Pastikan semua fungsi ini ada agar tidak ada error 'no attribute'
+    def loadRiver(self, d): self.runJavaScript(f"loadRiver({json.dumps(d)});")
+    def addRiver(self, d): self.runJavaScript(f"addRiver({json.dumps(d)});")
+    def loadDemBounds(self, d): self.runJavaScript(f"loadDemBounds({json.dumps(d)});")
+    def loadWatershed(self, d): self.runJavaScript(f"loadWatershed({json.dumps(d)});")
+    def loadCandidates(self, d): self.runJavaScript(f"loadCandidates({json.dumps(d)});")

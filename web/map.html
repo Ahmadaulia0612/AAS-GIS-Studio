@@ -1,14 +1,10 @@
 <!DOCTYPE html>
 <html>
-
 <head>
     <meta charset="utf-8">
+    <title>AAS GIS Studio Map</title>
+    <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    
-    <!-- Wajib ada untuk komunikasi JavaScript ke Python PySide6 -->
-    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
-
     <style>
         html, body, #map {
             width: 100%;
@@ -18,170 +14,150 @@
         }
     </style>
 </head>
-
 <body>
     <div id="map"></div>
 
-    <script>
-        // 1. Inisialisasi Peta
-        var map = L.map('map').setView([-0.789275, 113.921327], 5);
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- QWebChannel JS -->
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 
-        // 2. Tambahkan Basemap OpenStreetMap
+    <script>
+        var map = L.map('map').setView([0.5, 110.0], 8);
+
+        // Basemap OpenStreetMap
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
             attribution: '© OpenStreetMap'
         }).addTo(map);
 
-        // 3. Inisialisasi QWebChannel untuk koneksi ke Python
-        var backend = null;
-        if (typeof qt !== 'undefined') {
-            new QWebChannel(qt.webChannelTransport, function (channel) {
-                backend = channel.objects.backend;
-                console.log("QWebChannel berhasil terhubung ke Python!");
-            });
-        } else {
-            console.log("QWebChannel tidak tersedia (dijalankan di luar browser PyQt).");
-        }
+        var demBoundsLayer = null;
+        var riverLayer = null;
+        var watershedLayer = null;
+        var outletMarker = null;
+        var candidatesLayer = null;
 
-        // 4. Custom Icon Merah untuk Outlet (Inline SVG)
-        var redPinSVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="40" height="40"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" fill="#d32f2f" stroke="#ffffff" stroke-width="1"/></svg>';
-        var redPinUrl = 'data:image/svg+xml;base64,' + btoa(redPinSVG);
-
-        var redPinIcon = L.icon({
-            iconUrl: redPinUrl,
-            iconSize: [40, 40],
-            iconAnchor: [20, 40],
-            popupAnchor: [0, -40]
+        // Inisialisasi QWebChannel untuk komunikasi dengan Python (BrowserPage)
+        new QWebChannel(qt.webChannelTransport, function (channel) {
+            window.backend = channel.objects.backend;
         });
 
-        var outletMarker = null;
-        var demBoundsLayer = null; // Layer untuk kotak batas DEM
-        var riverLayerGroup = L.layerGroup().addTo(map);
-        var watershedLayerGroup = L.layerGroup().addTo(map);
-
-        // 5. Logika Klik Peta (Pilih Outlet & Kirim ke Python)
+        // Event Klik Peta untuk memilih Titik Outlet
         map.on('click', function(e) {
             var lat = e.latlng.lat;
             var lng = e.latlng.lng;
 
-            if (outletMarker !== null) {
+            if (outletMarker) {
                 map.removeLayer(outletMarker);
             }
 
-            outletMarker = L.marker([lat, lng], {icon: redPinIcon}).addTo(map);
+            outletMarker = L.marker([lat, lng]).addTo(map)
+                .bindPopup("Outlet Terpilih<br>Lat: " + lat.toFixed(5) + "<br>Lng: " + lng.toFixed(5))
+                .openPopup();
 
-            if (backend) {
-                backend.receiveOutletCoords(lat, lng);
+            // Kirim koordinat ke backend Python
+            if (window.backend && window.backend.receiveOutletCoords) {
+                window.backend.receiveOutletCoords(lat, lng);
             }
         });
 
-        // 6. Fungsi untuk menaruh marker otomatis dari Load KML / KMZ
+        // 1. Fungsi Load DEM Bounds & Zoom Otomatis (Fit Bounds)
+        function loadDemBounds(geojson_data) {
+            if (demBoundsLayer) {
+                map.removeLayer(demBoundsLayer);
+            }
+
+            demBoundsLayer = L.geoJSON(geojson_data, {
+                style: {
+                    color: "#ff7800",
+                    weight: 2,
+                    opacity: 0.65,
+                    fillOpacity: 0.1
+                }
+            }).addTo(map);
+        }
+
+        function fitDemBounds(southWest, northEast) {
+            var bounds = L.latLngBounds(southWest, northEast);
+            map.fitBounds(bounds, { padding: [30, 30] });
+        }
+
+        // 2. Fungsi Load River
+        function loadRiver(geojson_data) {
+            if (riverLayer) {
+                map.removeLayer(riverLayer);
+            }
+            riverLayer = L.geoJSON(geojson_data, {
+                style: { color: "blue", weight: 1.5 }
+            }).addTo(map);
+        }
+
+        function addRiver(geojson_data) {
+            if (riverLayer) {
+                map.removeLayer(riverLayer);
+            }
+            riverLayer = L.geoJSON(geojson_data, {
+                style: { color: "blue", weight: 1.5 }
+            }).addTo(map);
+        }
+
+        // 3. Fungsi Set Outlet Marker dari KML
         function setOutletMarker(lat, lng) {
-            if (outletMarker !== null) {
+            if (outletMarker) {
                 map.removeLayer(outletMarker);
             }
-            outletMarker = L.marker([lat, lng], {icon: redPinIcon}).addTo(map);
-            map.setView([lat, lng], 15);
+            outletMarker = L.marker([lat, lng]).addTo(map)
+                .bindPopup("Outlet KML<br>Lat: " + lat.toFixed(5) + "<br>Lng: " + lng.toFixed(5))
+                .openPopup();
+            map.setView([lat, lng], 13);
         }
 
-        // 7. Fungsi untuk Menampilkan Kotak Batas DEM di Peta
-        function loadDemBounds(geojson_data) {
-            try {
-                if (demBoundsLayer !== null) {
-                    map.removeLayer(demBoundsLayer);
+        // 4. Fungsi Load Watershed
+        function loadWatershed(geojson_data) {
+            if (watershedLayer) {
+                map.removeLayer(watershedLayer);
+            }
+            watershedLayer = L.geoJSON(geojson_data, {
+                style: {
+                    color: "#d9534f",
+                    weight: 2,
+                    fillColor: "#f0ad4e",
+                    fillOpacity: 0.4
                 }
+            }).addTo(map);
+            map.fitBounds(watershedLayer.getBounds());
+        }
 
-                demBoundsLayer = L.geoJSON(geojson_data, {
-                    style: {
-                        color: "#ff7800",      // Garis oranye
-                        weight: 2,
-                        opacity: 0.8,
+        // 5. Fungsi Load Candidates Hydropower
+        function loadCandidates(geojson_data) {
+            if (candidatesLayer) {
+                map.removeLayer(candidatesLayer);
+            }
+            candidatesLayer = L.geoJSON(geojson_data, {
+                pointToLayer: function (feature, latlng) {
+                    return L.circleMarker(latlng, {
+                        radius: 7,
                         fillColor: "#ff7800",
-                        fillOpacity: 0.15     // Transparan agar peta latar tetap terlihat
-                    }
-                }).addTo(map);
-
-                if (demBoundsLayer.getBounds().isValid()) {
-                    map.fitBounds(demBoundsLayer.getBounds());
-                }
-                console.log("Kotak batas DEM berhasil dimuat ke peta.");
-            } catch (e) {
-                console.error("Error loading DEM bounds:", e);
-            }
-        }
-
-        // 8. Fungsi Load River (Garis Sungai Biru)
-        function loadRiver(geojsonStr) {
-            try {
-                var data = JSON.parse(geojsonStr);
-                riverLayerGroup.clearLayers();
-
-                var geoJsonLayer = L.geoJSON(data, {
-                    style: {
-                        color: "#0066ff",
-                        weight: 2,
-                        opacity: 1
-                    }
-                });
-
-                riverLayerGroup.addLayer(geoJsonLayer);
-                
-                if (geoJsonLayer.getBounds().isValid()) {
-                    map.fitBounds(geoJsonLayer.getBounds());
-                }
-            } catch (e) {
-                console.error("Error loading river:", e);
-            }
-        }
-
-        function addRiver(geojsonStr) {
-            try {
-                var data = JSON.parse(geojsonStr);
-                var geoJsonLayer = L.geoJSON(data, {
-                    style: {
-                        color: "#0066ff",
+                        color: "#000",
                         weight: 1,
-                        fillColor: "#0066ff",
-                        fillOpacity: 0.5
+                        opacity: 1,
+                        fillOpacity: 0.9
+                    });
+                },
+                onEachFeature: function (feature, layer) {
+                    if (feature.properties) {
+                        var p = feature.properties;
+                        var popupContent = `<b>Kandidat Hydropower</b><br>` +
+                                           `Rank: ${p.rank || '-'}<br>` +
+                                           `Daya: ${p.power_mw || p.power || '-'} MW<br>` +
+                                           `Head: ${p.head_m || '-'} m<br>` +
+                                           `Catchment Area: ${p.ca_km2 || '-'} km²<br>` +
+                                           `Debit: ${p.debit_m3s || '-'} m³/s`;
+                        layer.bindPopup(popupContent);
                     }
-                });
-                riverLayerGroup.addLayer(geoJsonLayer);
-            } catch (e) {
-                console.error("Error adding river polygon:", e);
-            }
-        }
-
-        // 9. Fungsi Load Watershed Poligon ke Peta
-        function loadWatershed(data) {
-            try {
-                watershedLayerGroup.clearLayers();
-
-                var watershedLayer = L.geoJSON(data, {
-                    style: {
-                        color: "#2e7d32",
-                        weight: 2,
-                        fillColor: "#4caf50",
-                        fillOpacity: 0.4
-                    },
-                    onEachFeature: function (feature, layer) {
-                        layer.bindPopup("<b>Catchment Area (Watershed)</b><br>Status: Berhasil Delineasi");
-                        layer.on('click', function() {
-                            layer.openPopup();
-                        });
-                    }
-                });
-
-                watershedLayerGroup.addLayer(watershedLayer);
-                
-                if (watershedLayer.getBounds().isValid()) {
-                    map.fitBounds(watershedLayer.getBounds());
                 }
-                console.log("Watershed polygon loaded successfully to map");
-            } catch (e) {
-                console.error("Error loading watershed polygon:", e);
-            }
+            }).addTo(map);
         }
     </script>
 </body>
-
 </html>

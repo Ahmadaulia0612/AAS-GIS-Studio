@@ -1,59 +1,40 @@
 import os
-import shutil
 import rasterio
 from rasterio.merge import merge
 
 class DEMMerger:
-    def __init__(self):
-        self.output_folder = "output"
-        os.makedirs(self.output_folder, exist_ok=True)
+    """Kelas untuk menggabungkan beberapa file DEM menjadi satu file raster utuh"""
+    def __init__(self, dem_files):
+        self.dem_files = dem_files
 
-    def merge(self, dem_files):
-        if not dem_files:
-            raise Exception("DEM kosong")
+    def merge(self, output_path="output/merged_dem.tif"):
+        src_files_to_mosaic = []
+        try:
+            for fp in self.dem_files:
+                src = rasterio.open(fp)
+                src_files_to_mosaic.append(src)
 
-        print("=" * 60)
-        print("MERGING DEM MENGGUNAKAN RASTERIO (ANTI-SPASI)")
-        print("=" * 60)
-        for f in dem_files:
-            print(f)
-        print("=" * 60)
+            mosaic, out_trans = merge(src_files_to_mosaic, nodata=-9999)
+            out_meta = src_files_to_mosaic[0].meta.copy()
 
-        output_raster = os.path.join(self.output_folder, "merged_dem.tif")
+            out_meta.update({
+                "height": mosaic.shape[1],
+                "width": mosaic.shape[2],
+                "transform": out_trans,
+                "nodata": -9999
+            })
 
-        # Bersihkan sisa file lama
-        if os.path.exists(output_raster):
-            os.remove(output_raster)
-        old_spasi = os.path.join(self.output_folder, "merged dem.tif")
-        if os.path.exists(old_spasi):
-            os.remove(old_spasi)
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-        if len(dem_files) == 1:
-            shutil.copy(dem_files[0], output_raster)
-        else:
-            try:
-                # Proses merge kebal spasi menggunakan rasterio
-                src_files_to_mosaic = [rasterio.open(fp) for fp in dem_files]
-                mosaic, out_trans = merge(src_files_to_mosaic)
+            with rasterio.open(output_path, "w", **out_meta) as dest:
+                dest.write(mosaic)
 
-                # Sesuaikan metadata
-                out_meta = src_files_to_mosaic[0].meta.copy()
-                out_meta.update({
-                    "driver": "GTiff",
-                    "height": mosaic.shape[1],
-                    "width": mosaic.shape[2],
-                    "transform": out_trans,
-                })
+            print(f"INFO: Berhasil menggabungkan {len(self.dem_files)} DEM ke {output_path}")
+            return output_path
 
-                # Tulis file hasil merge
-                with rasterio.open(output_raster, "w", **out_meta) as dest:
-                    dest.write(mosaic)
-
-                # Tutup semua file
-                for src in src_files_to_mosaic:
-                    src.close()
-            except Exception as e:
-                raise Exception(f"Gagal merge DEM: {e}")
-
-        print("Merged DEM Raster :", output_raster)
-        return output_raster
+        except Exception as e:
+            print(f"ERROR saat merge DEM: {e}")
+            raise e
+        finally:
+            for src in src_files_to_mosaic:
+                src.close()

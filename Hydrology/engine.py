@@ -22,13 +22,13 @@ class HydrologyEngine:
 
     def run(self):
         print("=" * 60)
-        print("MENJALANKAN HYDROLOGY ENGINE (STANDARD STABLE FLOW)")
+        print("MENJALANKAN HYDROLOGY ENGINE (STABLE MERGE & DELINEATION)")
         print("=" * 60)
 
-        # 1. Merge DEM
+        # 1. Merge DEM secara utuh dari daftar file yang dimuat
         print("\n[1/3] Menggabungkan file DEM...")
-        merger = DEMMerger()
-        self.merged_dem = merger.merge(self.dem_files)
+        merger = DEMMerger(dem_files=self.dem_files)
+        self.merged_dem = merger.merge(output_path="output/merged_dem.tif")
 
         # 2. Analisis Hidrologi Terrain (Fill Sink, Flow Direction, Flow Accumulation)
         print("\n[2/3] Analisis Hidrologi Terrain...")
@@ -72,10 +72,10 @@ class HydrologyEngine:
 
         target_dem = normalized_dem if os.path.exists(normalized_dem) else abs_dem
 
-        # Fill Sink
+        # Fill Sink (Breach Depressions)
         self.wbt.breach_depressions(dem=target_dem, output=dem_filled)
 
-        # Flow Direction (D8)
+        # Flow Direction (D8 Pointer)
         self.wbt.d8_pointer(dem=dem_filled, output=flow_dir)
 
         # Flow Accumulation
@@ -92,11 +92,12 @@ class HydrologyEngine:
 
         with rasterio.open(flow_acc) as src:
             row, col = src.index(lon, lat)
-            window = src.read(1, window=rasterio.windows.Window(col - 5, row - 5, 10, 10))
+            # Ambil jendela pencarian piksel terdekat dengan akumulasi aliran tertinggi
+            window = src.read(1, window=rasterio.windows.Window(max(0, col - 10), max(0, row - 10), 20, 20))
             if window.size > 0:
                 local_r, local_c = np.unravel_index(np.argmax(window), window.shape)
-                row = (row - 5) + local_r
-                col = (col - 5) + local_c
+                row = max(0, row - 10) + local_r
+                col = max(0, col - 10) + local_c
                 lon, lat = src.xy(row, col)
 
         point = Point(lon, lat)
@@ -114,6 +115,7 @@ class HydrologyEngine:
 
         gdf_point_projected.to_file(pour_point_shp)
 
+        # Proses Watershed dari WhiteboxTools
         self.wbt.watershed(
             d8_pntr=flow_dir,
             pour_pts=pour_point_shp,
@@ -145,7 +147,8 @@ class HydrologyEngine:
             print("Peringatan: Poligon watershed kosong!")
             return
 
-        gdf_ws_utm = gdf_ws.to_crs(epsg=32748)
+        # Hitung luas dalam UTM (Zone 49N / 48N otomatis sesuai CRS)
+        gdf_ws_utm = gdf_ws.to_crs(epsg=32749) if target_crs and "327" in str(target_crs) else gdf_ws.to_crs(epsg=32748)
         total_area_m2 = gdf_ws_utm.geometry.area.sum()
         self.last_area_km2 = total_area_m2 / 1_000_000
         
