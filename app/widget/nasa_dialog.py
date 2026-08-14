@@ -1117,6 +1117,13 @@ class ClimateDataDownloadDialog(QDialog):
                 )
             )
 
+            # Cache daily rainfall for the FDC module. This is separate from the
+            # user-selected Excel export and lets FDC compare NASA vs CHIRPS.
+            cache_dir = os.path.abspath("output/climate")
+            os.makedirs(cache_dir, exist_ok=True)
+            cache_name = "nasa_daily.csv" if self._source == "NASA" else "chirps_daily.csv"
+            self._df.to_csv(os.path.join(cache_dir, cache_name), index=False)
+
             QMessageBox.information(
                 self,
                 "Berhasil",

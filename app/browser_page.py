@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 
 from PySide6.QtCore import QUrl, QThread, Signal
@@ -98,18 +98,13 @@ class BrowserPage(QWidget):
         row3.addWidget(self.btn_export_kml)
         row3.addWidget(self.btn_calc_energy)
 
-        # Baris 4: Data Iklim (NASA / CHIRPS) & Buat FDC
         row4 = QHBoxLayout()
         self.btn_nasa = QPushButton("Data Iklim")
         self.btn_nasa.setStyleSheet("background-color: #ffc107; color: black; font-weight: bold;")
         self.btn_nasa.setEnabled(False)
 
-        self.btn_fdc = QPushButton("Buat FDC")
-        self.btn_fdc.setStyleSheet("background-color: #6f42c1; color: white; font-weight: bold;")
-        self.btn_fdc.setEnabled(False)
 
         row4.addWidget(self.btn_nasa)
-        row4.addWidget(self.btn_fdc)
 
         toolbar.addLayout(row1)
         toolbar.addLayout(row2)
@@ -146,7 +141,6 @@ class BrowserPage(QWidget):
         self.btn_export_kml.clicked.connect(self.export_watershed_kml)
         self.btn_calc_energy.clicked.connect(self.open_energy_calculator)
         self.btn_nasa.clicked.connect(self.open_nasa_dialog)
-        self.btn_fdc.clicked.connect(self.open_fdc_dialog)
 
     def load_dem(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Pilih DEM", "", "GeoTIFF (*.tif *.tiff)")
@@ -191,7 +185,7 @@ class BrowserPage(QWidget):
         lbl_name = QLabel(file_name)
         lbl_name.setStyleSheet("background: transparent;")
 
-        btn_del = QPushButton("✕")
+        btn_del = QPushButton("âœ•")
         btn_del.setFixedSize(18, 18)
         btn_del.setStyleSheet("background-color: #d9534f; color: white; font-weight: bold; border-radius: 3px; border: none;")
         btn_del.clicked.connect(lambda _, fp=file_path, it=tree_item: self.remove_single_dem(fp, it))
@@ -279,7 +273,7 @@ class BrowserPage(QWidget):
         lbl_name = QLabel(file_name)
         lbl_name.setStyleSheet("background: transparent;")
 
-        btn_del = QPushButton("✕")
+        btn_del = QPushButton("âœ•")
         btn_del.setFixedSize(18, 18)
         btn_del.setStyleSheet("background-color: #d9534f; color: white; font-weight: bold; border-radius: 3px; border: none;")
         btn_del.clicked.connect(lambda _, fp=file_path, it=tree_item: self.remove_single_river(fp, it))
@@ -363,13 +357,6 @@ class BrowserPage(QWidget):
         from app.widget.nasa_dialog import ClimateDataDownloadDialog
         lat, lon = self.outlet
         dialog = ClimateDataDownloadDialog(lat, lon, self)
-        if dialog.exec():
-            self.btn_fdc.setEnabled(True)
-
-    def open_fdc_dialog(self):
-        ca_val = self.calculated_ca_km2 if self.calculated_ca_km2 else 742.07
-        from app.widget.fdc_dialog import FdcDialog
-        dialog = FdcDialog(ca_km2=ca_val, parent=self)
         dialog.exec()
 
     def run_watershed(self):
@@ -401,7 +388,7 @@ class BrowserPage(QWidget):
                 geo_content = f.read()
             self.page.runJavaScript(f"loadWatershed({json.dumps(json.loads(geo_content))});")
 
-        QMessageBox.information(self, "Selesai", f"{message}\n\nLuas CA: {area_km2:.3f} km²\nWaktu: {duration:.2f} detik")
+        QMessageBox.information(self, "Selesai", f"{message}\n\nLuas CA: {area_km2:.3f} kmÂ²\nWaktu: {duration:.2f} detik")
 
     def on_watershed_error(self, err_msg):
         self.btn_ws.setEnabled(True)
