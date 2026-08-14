@@ -12,6 +12,9 @@ from app.browser_page import BrowserPage
 # Import Worker Thread Hidrologi
 from Hydrology.worker import HydrologyWorker
 
+# Import Dialog Unduh Data Iklim (NASA POWER & CHIRPS)
+from app.widget.nasa_dialog import ClimateDataDownloadDialog
+
 
 class MainWindow(QMainWindow):
 
@@ -43,18 +46,29 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(tabs)
 
-        # Hubungkan tombol Watershed dari halaman Hydrology ke fungsi Thread
+        # Hubungkan tombol Watershed dan tombol Data Iklim dari halaman Hydrology
         self.connect_signals()
 
     def connect_signals(self):
-        # Asumsikan browser_page memiliki tombol atau event untuk menjalankan watershed
-        # Sesuaikan dengan nama tombol di halaman browser/hydrology-mu jika ada
+        # 1. Hubungkan tombol Watershed
         if hasattr(self.browser_page, "btn_watershed"):
             self.browser_page.btn_watershed.clicked.connect(self.run_watershed_process)
 
+        # 2. Hubungkan tombol Data NASA / Iklim jika ada di browser_page
+        # (Jika tombolnya bernama btn_data_nasa atau sejenisnya di halaman Hydrology)
+        if hasattr(self.browser_page, "btn_data_nasa"):
+            self.browser_page.btn_data_nasa.clicked.connect(self.open_climate_dialog)
+
+    def open_climate_dialog(self):
+        # Ambil koordinat aktif dari halaman browser/peta jika tersedia, atau gunakan default
+        lat = getattr(self.browser_page, "selected_lat", 0.7265)
+        lon = getattr(self.browser_page, "selected_lon", 113.4960)
+
+        # Buka dialog pilihan sumber data (NASA & CHIRPS)
+        dialog = ClimateDataDownloadDialog(lat, lon, self)
+        dialog.exec()
+
     def run_watershed_process(self):
-        # Ambil data DEM, River, dan Outlet dari halaman terkait
-        # Sesuaikan variabel ini dengan struktur atribut di aplikasi aslimu
         dem_files = getattr(self.browser_page, "dem_files", [])
         river_file = getattr(self.browser_page, "river_file", None)
         outlet = getattr(self.browser_page, "selected_outlet", None)
@@ -65,7 +79,6 @@ class MainWindow(QMainWindow):
 
         print("Memulai proses hidrologi di background thread...")
 
-        # Jalankan worker thread agar aplikasi tidak Not Responding / Freeze
         self.worker = HydrologyWorker(dem_files, river_file, outlet)
         self.worker.progress_signal.connect(self.on_watershed_progress)
         self.worker.finished_signal.connect(self.on_watershed_finished)
@@ -75,7 +88,6 @@ class MainWindow(QMainWindow):
 
     def on_watershed_progress(self, percent, message):
         print(f"[Progress {percent}%]: {message}")
-        # Jika kamu ingin menampilkan teks di status bar jendela utama:
         self.statusBar().showMessage(message, 5000)
 
     def on_watershed_finished(self, message, duration):

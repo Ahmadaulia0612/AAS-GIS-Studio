@@ -98,9 +98,9 @@ class BrowserPage(QWidget):
         row3.addWidget(self.btn_export_kml)
         row3.addWidget(self.btn_calc_energy)
 
-        # Baris 4: Data NASA & Buat FDC
+        # Baris 4: Data Iklim (NASA / CHIRPS) & Buat FDC
         row4 = QHBoxLayout()
-        self.btn_nasa = QPushButton("Data NASA")
+        self.btn_nasa = QPushButton("Data Iklim")
         self.btn_nasa.setStyleSheet("background-color: #ffc107; color: black; font-weight: bold;")
         self.btn_nasa.setEnabled(False)
 
@@ -359,9 +359,10 @@ class BrowserPage(QWidget):
             QMessageBox.warning(self, "Peringatan", "Silakan tentukan titik outlet terlebih dahulu pada peta.")
             return
 
-        from app.widget.nasa_dialog import NasaDownloadDialog
+        # Menggunakan ClimateDataDownloadDialog yang menyediakan pilihan NASA POWER & CHIRPS
+        from app.widget.nasa_dialog import ClimateDataDownloadDialog
         lat, lon = self.outlet
-        dialog = NasaDownloadDialog(lat, lon, self)
+        dialog = ClimateDataDownloadDialog(lat, lon, self)
         if dialog.exec():
             self.btn_fdc.setEnabled(True)
 

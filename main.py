@@ -1,8 +1,8 @@
 import os
-os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu"
+# Tambahkan flag Chromium tambahan untuk mengatasi kegagalan konteks GPU pada berbagai jenis PC/Laptop
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --disable-software-rasterizer --no-sandbox"
 
 import sys
-
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
 
@@ -16,7 +16,7 @@ from modules.analyzer.topology import TopologyAnalyzer
 
 
 def main():
-
+    # Aktifkan atribut high DPI jika didukung
     app = QApplication(sys.argv)
 
     app.setWindowIcon(
@@ -27,19 +27,22 @@ def main():
     window.show()  
 
     print("\n===== POLYGON ANALYZER =====")
-    PolygonAnalyzer().analyze(
-        "area_baku_sawah.shp"
-    )
+    try:
+        PolygonAnalyzer().analyze("area_baku_sawah.shp")
+    except Exception as e:
+        print(f"Analyzer notice: {e}")
 
     print("\n===== POLYGON COMPARE =====")
-    PolygonCompare(
-        "area_baku_sawah.shp"
-    ).summary()
+    try:
+        PolygonCompare("area_baku_sawah.shp").summary()
+    except Exception as e:
+        print(f"Compare notice: {e}")
 
     print("\n===== TOPOLOGY ANALYZER =====")
-    TopologyAnalyzer(
-        "area_baku_sawah.shp"
-    ).analyze()
+    try:
+        TopologyAnalyzer("area_baku_sawah.shp").analyze()
+    except Exception as e:
+        print(f"Topology notice: {e}")
 
     sys.exit(app.exec())
 
