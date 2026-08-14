@@ -185,7 +185,7 @@ class BrowserPage(QWidget):
         lbl_name = QLabel(file_name)
         lbl_name.setStyleSheet("background: transparent;")
 
-        btn_del = QPushButton("âœ•")
+        btn_del = QPushButton("X")
         btn_del.setFixedSize(18, 18)
         btn_del.setStyleSheet("background-color: #d9534f; color: white; font-weight: bold; border-radius: 3px; border: none;")
         btn_del.clicked.connect(lambda _, fp=file_path, it=tree_item: self.remove_single_dem(fp, it))
@@ -273,7 +273,7 @@ class BrowserPage(QWidget):
         lbl_name = QLabel(file_name)
         lbl_name.setStyleSheet("background: transparent;")
 
-        btn_del = QPushButton("âœ•")
+        btn_del = QPushButton("X")
         btn_del.setFixedSize(18, 18)
         btn_del.setStyleSheet("background-color: #d9534f; color: white; font-weight: bold; border-radius: 3px; border: none;")
         btn_del.clicked.connect(lambda _, fp=file_path, it=tree_item: self.remove_single_river(fp, it))
@@ -394,3 +394,4 @@ class BrowserPage(QWidget):
         self.btn_ws.setEnabled(True)
         self.btn_ws.setText("Watershed")
         QMessageBox.critical(self, "Error", f"Terjadi kesalahan:\n{err_msg}")
+

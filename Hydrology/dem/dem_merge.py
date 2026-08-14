@@ -1,4 +1,4 @@
-from rasterio.merge import merge
+﻿from rasterio.merge import merge
 from rasterio.crs import CRS
 import rasterio
 
@@ -54,14 +54,3 @@ class DEMMerger:
         for s in src_files:
             s.close()
 
-        print("=" * 60)
-        print("DEM FILES")
-        print("=" * 60)
-
-        for f in self.dem_files:
-        print(f)
-        print("EXIST :", os.path.exists(f))
-
-        print("Merged :", output_file)
-
-        return output_file
