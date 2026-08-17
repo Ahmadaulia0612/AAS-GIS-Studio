@@ -435,32 +435,14 @@ class HydrologyEngine:
                 )
             )
 
-            # Jika tidak ada DEM tambahan, jangan gagal hanya
-            # karena polygon watershed menyentuh tepi raster.
-            #
-            # Outlet sudah dipastikan berada di dalam DEM pada
-            # delineate_watershed(). Jadi hasil CA tetap dipakai
-            # berdasarkan DEM yang tersedia.
+            # Tidak ada DEM tambahan
             if len(expanded) == len(selected):
 
-                print()
-                print("=" * 60)
-                print(
-                    "WARNING: Watershed menyentuh edge DEM."
+                raise RuntimeError(
+                    "Watershed menyentuh batas "
+                    "DEM tetapi tidak ada DEM "
+                    "tambahan yang tersedia."
                 )
-                print(
-                    "Tidak ada DEM tambahan yang tersedia."
-                )
-                print(
-                    "Outlet berada di dalam DEM; "
-                    "hasil CA tetap digunakan."
-                )
-                print(
-                    f"CA = {area_km2:.3f} km²"
-                )
-                print("=" * 60)
-
-                return area_km2
 
             selected = expanded
 

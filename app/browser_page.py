@@ -64,6 +64,9 @@ class BrowserPage(QWidget):
 
         self.dem_files = []
         self.river_file = None
+        self.river_files = []
+        self.river_geojson = {}
+        self.river_workers = []
         self.outlet = None
         self.calculated_ca_km2 = None
 
@@ -596,42 +599,59 @@ class BrowserPage(QWidget):
 
     def load_river(self):
 
-        filename, _ = QFileDialog.getOpenFileName(
+        files, _ = QFileDialog.getOpenFileNames(
             self,
-            "Pilih River",
+            "Pilih River / RBI",
             "",
-            "GeoPackage (*.gpkg *.shp)"
+            "GeoPackage / Shapefile (*.gpkg *.shp)"
         )
 
-        if not filename:
+        if not files:
             return
 
-        self.river_file = filename
+        existing = set(self.river_files)
 
-        self.add_river_item_with_x(
-            filename,
-            os.path.basename(filename)
-        )
+        new_files = [
+            f for f in files
+            if f not in existing
+        ]
+
+        if not new_files:
+            QMessageBox.warning(
+                self,
+                "River",
+                "Semua file yang dipilih sudah ada di daftar."
+            )
+            return
+
+        for filename in new_files:
+
+            self.river_files.append(filename)
+
+            self.add_river_item_with_x(
+                filename,
+                os.path.basename(filename)
+            )
+
+            worker = RiverWorker(filename)
+
+            worker.finished_signal.connect(
+                self.on_river_loaded
+            )
+
+            worker.error_signal.connect(
+                self.on_river_error
+            )
+
+            self.river_workers.append(worker)
+            worker.start()
 
         QMessageBox.information(
             self,
             "Memuat River",
-            "File sungai sedang dimuat di latar belakang..."
+            f"{len(new_files)} RBI ditambahkan.\n"
+            "Data sedang dimuat di latar belakang..."
         )
-
-        self.river_worker = RiverWorker(
-            filename
-        )
-
-        self.river_worker.finished_signal.connect(
-            self.on_river_loaded
-        )
-
-        self.river_worker.error_signal.connect(
-            self.on_river_error
-        )
-
-        self.river_worker.start()
 
     # ==========================================================
     # ADD RIVER TREE ITEM
@@ -683,11 +703,7 @@ class BrowserPage(QWidget):
             else self.project.topLevelItem(0)
         )
 
-        while target_parent.childCount() > 0:
-
-            target_parent.removeChild(
-                target_parent.child(0)
-            )
+        # Multi-RBI: jangan hapus RBI yang sudah ada.
 
         tree_item = QTreeWidgetItem(
             target_parent
@@ -766,27 +782,22 @@ class BrowserPage(QWidget):
         item
     ):
 
-        self.river_file = None
+        if file_path in self.river_files:
+            self.river_files.remove(file_path)
+
+        self.river_geojson.pop(file_path, None)
 
         parent = item.parent()
 
         if parent:
+            parent.removeChild(item)
 
-            parent.removeChild(
-                item
-            )
-
-        self.page.loadRiver(
-            {
-                "type": "FeatureCollection",
-                "features": []
-            }
-        )
+        self._refresh_combined_river_map()
 
         QMessageBox.information(
             self,
             "River Dihapus",
-            "File sungai berhasil dihapus dari daftar."
+            f"File {os.path.basename(file_path)} berhasil dihapus."
         )
 
     # ==========================================================
@@ -798,17 +809,113 @@ class BrowserPage(QWidget):
         geojson_dict
     ):
 
-        if geojson_dict:
+        sender = self.sender()
+        path = getattr(sender, "path", None)
 
-            self.page.loadRiver(
-                geojson_dict
-            )
+        if path:
+            self.river_geojson[path] = geojson_dict
 
-        QMessageBox.information(
-            self,
-            "River",
-            "Data sungai berhasil ditampilkan di peta!"
+        self._refresh_combined_river_map()
+
+    def _refresh_combined_river_map(self):
+
+        features = []
+
+        for path in self.river_files:
+            data = self.river_geojson.get(path)
+
+            if data:
+                features.extend(
+                    data.get("features", [])
+                )
+
+        self.page.loadRiver(
+            {
+                "type": "FeatureCollection",
+                "features": features
+            }
         )
+
+    def _prepare_merged_river_for_watershed(self):
+
+        if not self.river_files:
+            return None
+
+        import geopandas as gpd
+        import pandas as pd
+
+        frames = []
+
+        for path in self.river_files:
+
+            if not os.path.exists(path):
+                continue
+
+            try:
+                gdf = gpd.read_file(path)
+
+                if not gdf.empty:
+                    frames.append(gdf)
+
+            except Exception as e:
+                print(
+                    f"Gagal membaca RBI {path}: {e}"
+                )
+
+        if not frames:
+            return None
+
+        normalized = []
+
+        for gdf in frames:
+
+            if gdf.crs is None:
+                gdf = gdf.set_crs(
+                    epsg=4326,
+                    allow_override=True
+                )
+
+            normalized.append(gdf)
+
+        target_crs = normalized[0].crs
+
+        for i in range(1, len(normalized)):
+
+            if normalized[i].crs != target_crs:
+                normalized[i] = normalized[i].to_crs(
+                    target_crs
+                )
+
+        merged = gpd.GeoDataFrame(
+            pd.concat(
+                normalized,
+                ignore_index=True
+            ),
+            crs=target_crs
+        )
+
+        os.makedirs(
+            "output",
+            exist_ok=True
+        )
+
+        merged_path = os.path.abspath(
+            "output/merged_river.gpkg"
+        )
+
+        if os.path.exists(merged_path):
+            try:
+                os.remove(merged_path)
+            except Exception:
+                pass
+
+        merged.to_file(
+            merged_path,
+            layer="river",
+            driver="GPKG"
+        )
+
+        return merged_path
 
     # ==========================================================
     # RIVER ERROR
@@ -1051,7 +1158,7 @@ class BrowserPage(QWidget):
 
         if (
             not self.dem_files
-            or not self.river_file
+            or not self.river_files
             or self.outlet is None
         ):
 
@@ -1070,6 +1177,32 @@ class BrowserPage(QWidget):
         self.btn_ws.setText(
             "Memproses..."
         )
+
+        try:
+
+            merged_river = (
+                self._prepare_merged_river_for_watershed()
+            )
+
+            if not merged_river:
+                raise RuntimeError(
+                    "Tidak ada RBI/River yang valid untuk Watershed."
+                )
+
+            self.river_file = merged_river
+
+        except Exception as e:
+
+            self.btn_ws.setEnabled(True)
+            self.btn_ws.setText("Watershed")
+
+            QMessageBox.critical(
+                self,
+                "River / RBI",
+                f"Gagal menggabungkan RBI:\n{e}"
+            )
+
+            return
 
         self.worker = HydrologyWorker(
             dem_files=self.dem_files,
