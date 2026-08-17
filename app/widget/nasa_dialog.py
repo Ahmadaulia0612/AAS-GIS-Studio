@@ -1,275 +1,65 @@
 import os
-import json
 import requests
 import pandas as pd
+from datetime import datetime
+from openpyxl import load_workbook
 
-from PySide6.QtCore import QDate, QThread, QObject, Signal
+from PySide6.QtCore import QDate, QObject, QThread, Signal, Slot
 from PySide6.QtWidgets import (
-    QDialog,
-    QVBoxLayout,
-    QLabel,
-    QComboBox,
-    QDateEdit,
-    QPushButton,
-    QMessageBox,
-    QFileDialog,
-    QHBoxLayout,
-    QWidget,
+    QDialog, QVBoxLayout, QLabel, QComboBox, QDateEdit,
+    QPushButton, QMessageBox, QFileDialog, QHBoxLayout, QWidget
 )
 
 
-# ============================================================
-# WORKER UNTUK DOWNLOAD DATA
-# Supaya GUI tidak "Not Responding"
-# ============================================================
+class CHIRPSDownloadWorker(QObject):
+    """
+    Worker khusus CHIRPS.
 
-class ClimateDownloadWorker(QObject):
-    finished = Signal(object, object, str, str)
+    Tujuannya hanya memindahkan request Climate Engine dan pengolahan
+    DataFrame ke background thread supaya GUI tidak menjadi Not Responding.
+    Alur hasil dan format Excel tetap sama.
+    """
+
+    finished = Signal(object, object)
     error = Signal(str)
-    progress = Signal(str)
 
-    def __init__(self, source, lat, lon, start_date, end_date):
+    def __init__(self, lat, lon, start_date, end_date):
         super().__init__()
-
-        self.source = source
-        self.lat = float(lat)
-        self.lon = float(lon)
+        self.lat = lat
+        self.lon = lon
         self.start_date = start_date
         self.end_date = end_date
 
-    # --------------------------------------------------------
-    # MAIN
-    # --------------------------------------------------------
-
+    @Slot()
     def run(self):
         try:
-            if self.source == "NASA":
-                self.progress.emit("Mengambil data NASA POWER...")
-                df = self.download_nasa()
-
-                self.progress.emit("Membuat rekap bulanan...")
-                monthly = self.make_monthly_recap(df)
-
-                self.finished.emit(
-                    df,
-                    monthly,
-                    "NASA",
-                    "Data NASA"
-                )
-
-            elif self.source == "CHIRPS":
-                self.progress.emit("Menghubungkan ke Climate Engine...")
-                df = self.download_chirps()
-
-                self.progress.emit("Membuat rekap bulanan...")
-                monthly = self.make_monthly_recap(df)
-
-                self.finished.emit(
-                    df,
-                    monthly,
-                    "CHIRPS",
-                    "Data CHIRPS Asli"
-                )
-
+            df_daily, monthly = self.download()
+            self.finished.emit(df_daily, monthly)
         except Exception as e:
             self.error.emit(str(e))
 
-    # ========================================================
-    # NASA POWER
-    # ========================================================
-
-    def download_nasa(self):
-
-        url = "https://power.larc.nasa.gov/api/temporal/daily/point"
-
-        params = {
-            # NASA dapat mengembalikan PRECTOTCORR
-            "parameters": "PRECTOT",
-            "community": "AG",
-
-            # PENTING:
-            # longitude dulu sesuai API
-            "longitude": self.lon,
-            "latitude": self.lat,
-
-            "start": self.start_date.replace("-", ""),
-            "end": self.end_date.replace("-", ""),
-
-            "format": "JSON"
-        }
-
-        response = requests.get(
-            url,
-            params=params,
-            timeout=180
-        )
-
-        if response.status_code != 200:
-            raise Exception(
-                f"NASA POWER gagal.\n\n"
-                f"HTTP: {response.status_code}\n"
-                f"{response.text[:1000]}"
-            )
-
-        try:
-            data = response.json()
-        except Exception:
-            raise Exception(
-                "NASA mengembalikan respons yang bukan JSON."
-            )
-
-        # ----------------------------------------------------
-        # Ambil parameter
-        # ----------------------------------------------------
-
-        parameters_data = (
-            data
-            .get("properties", {})
-            .get("parameter", {})
-        )
-
-        if not parameters_data:
-            raise Exception(
-                "Data parameter NASA kosong.\n\n"
-                f"Respons:\n{json.dumps(data, indent=2)[:2000]}"
-            )
-
-        # ----------------------------------------------------
-        # PRIORITAS PRECTOTCORR
-        # ----------------------------------------------------
-
-        if "PRECTOTCORR" in parameters_data:
-
-            rainfall = parameters_data["PRECTOTCORR"]
-
-        elif "PRECTOT" in parameters_data:
-
-            rainfall = parameters_data["PRECTOT"]
-
-        else:
-
-            available = list(parameters_data.keys())
-
-            raise Exception(
-                "Parameter curah hujan NASA tidak ditemukan.\n\n"
-                f"Parameter tersedia: {available}"
-            )
-
-        # ----------------------------------------------------
-        # DataFrame
-        # ----------------------------------------------------
-
-        rows = []
-
-        for date_str, value in rainfall.items():
-
-            try:
-                value = float(value)
-            except Exception:
-                value = 0.0
-
-            rows.append({
-                "Periode": date_str,
-                "Precipitation (mm)": value
-            })
-
-        if not rows:
-            raise Exception(
-                "NASA tidak mengembalikan data curah hujan."
-            )
-
-        df = pd.DataFrame(rows)
-
-        df["Periode"] = pd.to_datetime(
-            df["Periode"],
-            errors="coerce"
-        )
-
-        df["Precipitation (mm)"] = pd.to_numeric(
-            df["Precipitation (mm)"],
-            errors="coerce"
-        ).fillna(0.0)
-
-        df = df.dropna(
-            subset=["Periode"]
-        )
-
-        df = df.sort_values(
-            "Periode"
-        ).reset_index(drop=True)
-
-        return df
-
-    # ========================================================
-    # CLIMATE ENGINE / CHIRPS
-    # ========================================================
-
-    def download_chirps(self):
-
-        url = (
-            "https://api.climateengine.org/"
-            "timeseries/native/coordinates"
-        )
-
-        # ----------------------------------------------------
-        # API KEY
-        # ----------------------------------------------------
-
-        api_key = os.environ.get(
-            "CLIMATE_ENGINE_API_KEY",
-            ""
-        ).strip()
-
-        if not api_key:
-            raise Exception(
-                "CLIMATE_ENGINE_API_KEY tidak ditemukan.\n\n"
-                "Pastikan environment variable sudah di-set."
-            )
-
-        # ----------------------------------------------------
-        # KOORDINAT
-        #
-        # longitude, latitude
-        #
-        # otomatis memakai Outlet KML
-        # ----------------------------------------------------
-
-        coordinates = json.dumps([
-            [
-                float(self.lon),
-                float(self.lat)
-            ]
-        ])
+    def download(self):
+        url = "https://api.climateengine.org/timeseries/native/coordinates"
 
         payload = {
-            "coordinates": coordinates,
-            "simplify_geometry": None,
-            "buffer": None,
+            "coordinates": f"[[{float(self.lon)}, {float(self.lat)}]]",
             "area_reducer": "mean",
             "dataset": "CHIRPS_DAILY",
             "variable": "precipitation",
-            "compute_trends": "",
-            "mask_image_id": "",
-            "mask_band": "",
-            "mask_value": None,
             "start_date": self.start_date,
-            "end_date": self.end_date,
-            "export_path": "",
-            "export_format": ""
+            "end_date": self.end_date
         }
 
-        # ====================================================
-        # PENTING
-        #
-        # Climate Engine berhasil ketika:
-        #
-        # Authorization = API KEY
-        #
-        # BUKAN:
-        #
-        # Authorization = Bearer API KEY
-        # ====================================================
+        # Climate Engine API key dibaca dari environment.
+        api_key = os.environ.get("CLIMATE_ENGINE_API_KEY", "").strip()
 
+        if not api_key:
+            raise Exception(
+                "CLIMATE_ENGINE_API_KEY belum tersedia. "
+                "Set environment variable terlebih dahulu."
+            )
+
+        # Endpoint Climate Engine menerima token langsung.
         headers = {
             "Authorization": api_key,
             "Content-Type": "application/json"
@@ -279,126 +69,44 @@ class ClimateDownloadWorker(QObject):
             url,
             json=payload,
             headers=headers,
-            timeout=300
+            timeout=120
         )
 
-        # ----------------------------------------------------
-        # ERROR HANDLING
-        # ----------------------------------------------------
-
-        if response.status_code == 401:
-
-            raise Exception(
-                "Climate Engine menolak API key.\n\n"
-                "HTTP: 401\n"
-                "Invalid API token.\n\n"
-                "Tetapi jika validate_key menghasilkan HTTP 200, "
-                "pastikan aplikasi memakai environment variable "
-                "CLIMATE_ENGINE_API_KEY yang sama."
-            )
-
         if response.status_code != 200:
-
             raise Exception(
-                "Climate Engine gagal.\n\n"
-                f"HTTP: {response.status_code}\n\n"
-                f"{response.text[:3000]}"
+                f"Gagal API Climate Engine ({response.status_code}): "
+                f"{response.text}"
             )
 
-        # ----------------------------------------------------
-        # JSON
-        # ----------------------------------------------------
+        result = response.json()
 
         try:
-            result = response.json()
-        except Exception:
-
+            raw_data = result["Data"][0]["Data"]
+        except (KeyError, IndexError, TypeError):
             raise Exception(
-                "Respons Climate Engine bukan JSON.\n\n"
-                f"{response.text[:2000]}"
-            )
-
-        # ----------------------------------------------------
-        # Struktur:
-        #
-        # Data
-        #   [0]
-        #     Data
-        #       [
-        #         {
-        #           Date: ...
-        #           precipitation (mm): ...
-        #         }
-        #       ]
-        # ----------------------------------------------------
-
-        try:
-
-            raw_data = (
-                result["Data"][0]["Data"]
-            )
-
-        except Exception:
-
-            raise Exception(
-                "Format data Climate Engine tidak sesuai.\n\n"
-                f"{json.dumps(result, indent=2)[:4000]}"
-            )
-
-        if not raw_data:
-
-            raise Exception(
-                "Climate Engine tidak mengembalikan data."
+                "Respons Climate Engine tidak memiliki struktur Data yang diharapkan."
             )
 
         df = pd.DataFrame(raw_data)
 
-        # ----------------------------------------------------
-        # Nama kolom Climate Engine
-        # ----------------------------------------------------
-
-        if "Date" not in df.columns:
-
-            raise Exception(
-                "Kolom Date tidak ditemukan dari Climate Engine.\n\n"
-                f"Kolom tersedia: {list(df.columns)}"
-            )
-
-        # API saat ini mengembalikan:
-        #
-        # precipitation (mm)
-        #
-        # bukan hanya "precipitation"
-        #
-
-        precipitation_column = None
-
-        for col in df.columns:
-
-            if str(col).lower() in [
-                "precipitation",
-                "precipitation (mm)"
-            ]:
-                precipitation_column = col
-                break
-
-        if precipitation_column is None:
-
-            raise Exception(
-                "Kolom precipitation tidak ditemukan.\n\n"
-                f"Kolom tersedia: {list(df.columns)}"
-            )
-
-        df = df.rename(
+        # Climate Engine mengembalikan nama kolom:
+        # "Date" dan "precipitation (mm)"
+        df.rename(
             columns={
                 "Date": "Periode",
-                precipitation_column: "Precipitation (mm)"
-            }
+                "precipitation (mm)": "Precipitation (mm)"
+            },
+            inplace=True
         )
 
-        # ----------------------------------------------------
-        # Bersihkan
-        # ----------------------------------------------------
+        required_cols = {"Periode", "Precipitation (mm)"}
+        missing_cols = required_cols - set(df.columns)
+
+        if missing_cols:
+            raise Exception(
+                "Kolom CHIRPS tidak sesuai respons API. "
+                f"Kolom hilang: {sorted(missing_cols)}"
+            )
 
         df["Periode"] = pd.to_datetime(
             df["Periode"],
@@ -410,809 +118,508 @@ class ClimateDownloadWorker(QObject):
             errors="coerce"
         ).fillna(0.0)
 
-        df = df.dropna(
-            subset=["Periode"]
+        df = df.dropna(subset=["Periode"])
+
+        # Rekap Bulanan
+        df_proc = df.copy()
+        df_proc["YEAR"] = df_proc["Periode"].dt.year
+        df_proc["MONTH"] = df_proc["Periode"].dt.month
+
+        monthly = (
+            df_proc.pivot_table(
+                index="YEAR",
+                columns="MONTH",
+                values="Precipitation (mm)",
+                aggfunc="sum",
+                fill_value=0
+            )
+            .reset_index()
         )
 
-        df = df.sort_values(
-            "Periode"
-        ).reset_index(drop=True)
-
-        return df
-
-    # ========================================================
-    # REKAP BULANAN
-    # ========================================================
-
-    def make_monthly_recap(self, df):
-
-        temp = df.copy()
-
-        temp["YEAR"] = (
-            temp["Periode"].dt.year
-        )
-
-        temp["MONTH"] = (
-            temp["Periode"].dt.month
-        )
-
-        # ----------------------------------------------------
-        # Pivot
-        # ----------------------------------------------------
-
-        monthly = temp.pivot_table(
-            index="YEAR",
-            columns="MONTH",
-            values="Precipitation (mm)",
-            aggfunc="sum",
-            fill_value=0
-        )
-
-        # Pastikan 12 bulan selalu ada
         for month in range(1, 13):
-
             if month not in monthly.columns:
-                monthly[month] = 0.0
+                monthly[month] = 0
 
         monthly = monthly[
-            list(range(1, 13))
+            ["YEAR"] + list(range(1, 13))
         ]
 
-        month_names = [
-            "JAN",
-            "FEB",
-            "MAR",
-            "APR",
-            "MAY",
-            "JUN",
-            "JUL",
-            "AUG",
-            "SEP",
-            "OCT",
-            "NOV",
-            "DEC"
+        monthly.columns = [
+            "YEAR",
+            "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+            "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"
         ]
-
-        monthly.columns = month_names
-
-        # ----------------------------------------------------
-        # ANN
-        # ----------------------------------------------------
 
         monthly["ANN"] = monthly[
-            month_names
+            [
+                "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"
+            ]
         ].sum(axis=1)
 
-        monthly = monthly.reset_index()
+        # Format harian
+        df_daily = df[
+            ["Periode", "Precipitation (mm)"]
+        ].copy()
 
-        return monthly
+        df_daily["Periode"] = df_daily[
+            "Periode"
+        ].dt.strftime("%Y-%m-%d")
 
-    # ========================================================
-    # SIMPAN EXCEL
-    # ========================================================
+        return df_daily, monthly
 
-    @staticmethod
-    def save_excel(
-        filepath,
-        df,
-        monthly,
-        sheet_title,
-        source_name,
-        lat,
-        lon,
-        start_date,
-        end_date
-    ):
-
-        from openpyxl import load_workbook
-        from openpyxl.styles import Font, Alignment
-
-        # ----------------------------------------------------
-        # Format daily
-        # ----------------------------------------------------
-
-        daily = df.copy()
-
-        daily["Periode"] = (
-            daily["Periode"]
-            .dt.strftime("%Y-%m-%d")
-        )
-
-        # ----------------------------------------------------
-        # Excel writer
-        # ----------------------------------------------------
-
-        with pd.ExcelWriter(
-            filepath,
-            engine="openpyxl"
-        ) as writer:
-
-            daily.to_excel(
-                writer,
-                sheet_name=sheet_title,
-                index=False,
-                startrow=0,
-                startcol=0
-            )
-
-        # ----------------------------------------------------
-        # Styling
-        # ----------------------------------------------------
-
-        wb = load_workbook(filepath)
-
-        ws = wb[sheet_title]
-
-        # ----------------------------------------------------
-        # Header informasi
-        # ----------------------------------------------------
-
-        ws["A1"] = "Periode"
-        ws["B1"] = "Precipitation (mm)"
-
-        # Rekap dimulai kolom E
-        ws["E1"] = "HASIL REKAPITULASI BULAN"
-
-        # Header rekap
-        recap_headers = [
-            "YEAR",
-            "JAN",
-            "FEB",
-            "MAR",
-            "APR",
-            "MAY",
-            "JUN",
-            "JUL",
-            "AUG",
-            "SEP",
-            "OCT",
-            "NOV",
-            "DEC",
-            "ANN"
-        ]
-
-        for col_idx, header in enumerate(
-            recap_headers,
-            start=5
-        ):
-
-            cell = ws.cell(
-                row=2,
-                column=col_idx
-            )
-
-            cell.value = header
-            cell.font = Font(
-                bold=True
-            )
-
-        # ----------------------------------------------------
-        # Data rekap
-        # ----------------------------------------------------
-
-        for r_idx, row in monthly.iterrows():
-
-            for c_idx, value in enumerate(
-                row,
-                start=5
-            ):
-
-                cell = ws.cell(
-                    row=r_idx + 3,
-                    column=c_idx
-                )
-
-                cell.value = (
-                    float(value)
-                    if pd.notna(value)
-                    else 0.0
-                )
-
-        # ----------------------------------------------------
-        # Info koordinat
-        # ----------------------------------------------------
-
-        info_row = 1
-
-        ws["T1"] = "SOURCE"
-        ws["U1"] = source_name
-
-        ws["T2"] = "LATITUDE"
-        ws["U2"] = float(lat)
-
-        ws["T3"] = "LONGITUDE"
-        ws["U3"] = float(lon)
-
-        ws["T4"] = "START"
-        ws["U4"] = start_date
-
-        ws["T5"] = "END"
-        ws["U5"] = end_date
-
-        for cell in [
-            ws["T1"],
-            ws["T2"],
-            ws["T3"],
-            ws["T4"],
-            ws["T5"]
-        ]:
-
-            cell.font = Font(
-                bold=True
-            )
-
-        # ----------------------------------------------------
-        # Lebar kolom
-        # ----------------------------------------------------
-
-        ws.column_dimensions["A"].width = 15
-        ws.column_dimensions["B"].width = 22
-
-        for col in range(5, 19):
-
-            ws.column_dimensions[
-                ws.cell(
-                    row=1,
-                    column=col
-                ).column_letter
-            ].width = 12
-
-        ws.column_dimensions["T"].width = 15
-        ws.column_dimensions["U"].width = 22
-
-        # ----------------------------------------------------
-        # Format angka
-        # ----------------------------------------------------
-
-        for row in ws.iter_rows(
-            min_row=3,
-            min_col=2,
-            max_col=2
-        ):
-
-            for cell in row:
-
-                if isinstance(
-                    cell.value,
-                    (int, float)
-                ):
-                    cell.number_format = "0.####"
-
-        for row in ws.iter_rows(
-            min_row=3,
-            min_col=6,
-            max_col=18
-        ):
-
-            for cell in row:
-
-                if isinstance(
-                    cell.value,
-                    (int, float)
-                ):
-                    cell.number_format = "0.####"
-
-        # ----------------------------------------------------
-        # Freeze pane
-        # ----------------------------------------------------
-
-        ws.freeze_panes = "A2"
-
-        wb.save(filepath)
-
-
-# ============================================================
-# DIALOG
-# ============================================================
 
 class ClimateDataDownloadDialog(QDialog):
-
-    def __init__(
-        self,
-        lat,
-        lon,
-        parent=None
-    ):
-
+    def __init__(self, lat, lon, parent=None):
         super().__init__(parent)
 
-        # ----------------------------------------------------
-        # KOORDINAT DARI OUTLET KML
-        # ----------------------------------------------------
+        self.lat = lat
+        self.lon = lon
 
-        self.lat = float(lat)
-        self.lon = float(lon)
+        self.setWindowTitle("Unduh Data Iklim Presisi (NASA & CHIRPS)")
+        self.setFixedSize(450, 400)
 
-        self.thread = None
-        self.worker = None
-
-        self.setWindowTitle(
-            "Unduh Data Iklim Presisi (NASA & CHIRPS)"
-        )
-
-        self.setFixedSize(
-            500,
-            390
-        )
+        # Thread CHIRPS disimpan sebagai atribut supaya tidak dihancurkan
+        # sebelum proses background selesai.
+        self.chirps_thread = None
+        self.chirps_worker = None
 
         self.init_ui()
 
-    # ========================================================
-    # UI
-    # ========================================================
-
     def init_ui(self):
-
         layout = QVBoxLayout(self)
 
-        # ----------------------------------------------------
-        # Koordinat
-        # ----------------------------------------------------
-
+        # Info Koordinat
         self.lbl_info = QLabel(
-            "<b>Koordinat Target:</b><br>"
-            f"Latitude: {self.lat:.4f}<br>"
-            f"Longitude: {self.lon:.4f}"
+            f"<b>Koordinat Target:</b><br>"
+            f"Latitude: {self.lat:.4f}, Longitude: {self.lon:.4f}"
         )
+        layout.addWidget(self.lbl_info)
 
-        layout.addWidget(
-            self.lbl_info
-        )
-
-        # ----------------------------------------------------
-        # Source
-        # ----------------------------------------------------
-
-        layout.addWidget(
-            QLabel("Pilih Sumber Data:")
-        )
+        # Pilihan Sumber Data
+        layout.addWidget(QLabel("Pilih Sumber Data:"))
 
         self.combo_source = QComboBox()
-
         self.combo_source.addItems([
             "NASA POWER (Unduh Online)",
             "CHIRPS Asli (Climate Engine API)"
         ])
-
-        layout.addWidget(
-            self.combo_source
+        self.combo_source.currentIndexChanged.connect(
+            self.on_source_changed
         )
+        layout.addWidget(self.combo_source)
 
-        # ----------------------------------------------------
-        # Resolusi
-        # ----------------------------------------------------
-
-        layout.addWidget(
-            QLabel("Pilih Resolusi Waktu:")
-        )
+        # Resolusi Waktu NASA
+        self.lbl_interval = QLabel("Pilih Resolusi Waktu:")
+        layout.addWidget(self.lbl_interval)
 
         self.combo_interval = QComboBox()
-
         self.combo_interval.addItems([
             "Harian (Daily)",
             "Bulanan (Monthly)",
             "Tahunan (Annual)"
         ])
+        layout.addWidget(self.combo_interval)
 
-        # Kita prioritaskan data harian
-        # karena rekap bulanan dibuat dari data harian.
-        layout.addWidget(
-            self.combo_interval
-        )
-
-        # ----------------------------------------------------
-        # Tanggal
-        # ----------------------------------------------------
-
+        # Rentang tanggal
         date_widget_container = QWidget()
+        date_layout = QHBoxLayout(date_widget_container)
+        date_layout.setContentsMargins(0, 0, 0, 0)
 
-        date_layout = QHBoxLayout(
-            date_widget_container
-        )
+        self.date_start = QDateEdit()
+        self.date_start.setCalendarPopup(True)
+        self.date_start.setDate(QDate(2010, 1, 1))
 
-        date_layout.setContentsMargins(
-            0,
-            0,
-            0,
-            0
-        )
+        self.date_end = QDateEdit()
+        self.date_end.setCalendarPopup(True)
+        self.date_end.setDate(QDate(2025, 12, 31))
 
-        # START
         v1 = QVBoxLayout()
+        v1.addWidget(QLabel("Tanggal Mulai:"))
+        v1.addWidget(self.date_start)
 
-        v1.addWidget(
-            QLabel("Tanggal Mulai:")
-        )
-
-        self.date_start = QDateEdit(
-            QDate(
-                2010,
-                1,
-                1
-            )
-        )
-
-        self.date_start.setCalendarPopup(
-            True
-        )
-
-        self.date_start.setDisplayFormat(
-            "dd/MM/yyyy"
-        )
-
-        v1.addWidget(
-            self.date_start
-        )
-
-        # END
         v2 = QVBoxLayout()
-
-        v2.addWidget(
-            QLabel("Tanggal Selesai:")
-        )
-
-        self.date_end = QDateEdit(
-            QDate(
-                2025,
-                12,
-                31
-            )
-        )
-
-        self.date_end.setCalendarPopup(
-            True
-        )
-
-        self.date_end.setDisplayFormat(
-            "dd/MM/yyyy"
-        )
-
-        v2.addWidget(
-            self.date_end
-        )
+        v2.addWidget(QLabel("Tanggal Selesai:"))
+        v2.addWidget(self.date_end)
 
         date_layout.addLayout(v1)
         date_layout.addLayout(v2)
 
-        layout.addWidget(
-            date_widget_container
-        )
+        layout.addWidget(date_widget_container)
 
-        # ----------------------------------------------------
-        # Status
-        # ----------------------------------------------------
-
-        self.lbl_status = QLabel(
-            "Siap."
-        )
-
-        layout.addWidget(
-            self.lbl_status
-        )
-
-        # ----------------------------------------------------
-        # Button
-        # ----------------------------------------------------
-
+        # Tombol aksi
         self.btn_download = QPushButton(
             "📥 Unduh Otomatis & Simpan (.xlsx)"
         )
-
         self.btn_download.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #28a745;
-                color: white;
-                font-weight: bold;
-                padding: 10px;
-                border-radius: 5px;
-            }
+            "background-color: #28a745; "
+            "color: white; "
+            "font-weight: bold; "
+            "padding: 10px;"
+        )
+        self.btn_download.clicked.connect(self.process_data)
 
-            QPushButton:disabled {
-                background-color: #555555;
-            }
-            """
+        layout.addWidget(self.btn_download)
+
+    def on_source_changed(self, index):
+        if index == 0:
+            self.lbl_interval.show()
+            self.combo_interval.show()
+        else:
+            # CHIRPS Climate Engine secara default harian.
+            self.lbl_interval.hide()
+            self.combo_interval.hide()
+
+    def save_chirps_excel(self, filepath, df_daily, monthly):
+        with pd.ExcelWriter(
+            filepath,
+            engine="openpyxl"
+        ) as writer:
+            df_daily.to_excel(
+                writer,
+                sheet_name="Data CHIRPS Asli",
+                index=False,
+                startrow=0,
+                startcol=0
+            )
+
+            monthly.to_excel(
+                writer,
+                sheet_name="Data CHIRPS Asli",
+                index=False,
+                startrow=1,
+                startcol=4
+            )
+
+        wb = load_workbook(filepath)
+        ws = wb["Data CHIRPS Asli"]
+
+        ws["E1"] = "HASIL REKAPITULASI BULAN"
+
+        ws.column_dimensions["A"].width = 15
+        ws.column_dimensions["B"].width = 22
+
+        for col in range(5, 19):
+            ws.column_dimensions[
+                chr(64 + col)
+            ].width = 12
+
+        wb.save(filepath)
+
+    def process_data(self):
+        source_idx = self.combo_source.currentIndex()
+
+        start_str = self.date_start.date().toString(
+            "yyyy-MM-dd"
+        )
+        end_str = self.date_end.date().toString(
+            "yyyy-MM-dd"
         )
 
-        self.btn_download.clicked.connect(
-            self.process_download
-        )
-
-        layout.addWidget(
-            self.btn_download
-        )
-
-    # ========================================================
-    # DOWNLOAD
-    # ========================================================
-
-    def process_download(self):
-
-        start_date = (
-            self.date_start
-            .date()
-            .toString("yyyy-MM-dd")
-        )
-
-        end_date = (
-            self.date_end
-            .date()
-            .toString("yyyy-MM-dd")
-        )
-
-        # ----------------------------------------------------
-        # Validasi
-        # ----------------------------------------------------
-
-        if start_date > end_date:
-
+        # Validasi tanggal
+        if self.date_start.date() > self.date_end.date():
             QMessageBox.warning(
                 self,
-                "Tanggal Salah",
+                "Tanggal Tidak Valid",
                 "Tanggal mulai tidak boleh lebih besar "
                 "dari tanggal selesai."
             )
-
             return
 
-        # ----------------------------------------------------
-        # Source
-        # ----------------------------------------------------
-
-        source_idx = (
-            self.combo_source.currentIndex()
+        self.btn_download.setEnabled(False)
+        self.btn_download.setText(
+            "Sedang memproses data..."
         )
 
-        source = (
-            "NASA"
-            if source_idx == 0
-            else "CHIRPS"
-        )
-
-        # ----------------------------------------------------
-        # Disable UI
-        # ----------------------------------------------------
-
-        self.btn_download.setEnabled(
-            False
-        )
-
-        self.combo_source.setEnabled(
-            False
-        )
-
-        self.combo_interval.setEnabled(
-            False
-        )
-
-        self.date_start.setEnabled(
-            False
-        )
-
-        self.date_end.setEnabled(
-            False
-        )
-
-        self.lbl_status.setText(
-            "Sedang menghubungkan ke server..."
-        )
-
-        # ----------------------------------------------------
-        # Thread
-        # ----------------------------------------------------
-
-        self.thread = QThread()
-
-        self.worker = ClimateDownloadWorker(
-            source,
-            self.lat,
-            self.lon,
-            start_date,
-            end_date
-        )
-
-        self.worker.moveToThread(
-            self.thread
-        )
-
-        self.thread.started.connect(
-            self.worker.run
-        )
-
-        self.worker.progress.connect(
-            self.lbl_status.setText
-        )
-
-        self.worker.finished.connect(
-            self.download_finished
-        )
-
-        self.worker.error.connect(
-            self.download_error
-        )
-
-        self.worker.finished.connect(
-            self.thread.quit
-        )
-
-        self.worker.error.connect(
-            self.thread.quit
-        )
-
-        self.thread.finished.connect(
-            self.thread_finished
-        )
-
-        self.thread.start()
-
-    # ========================================================
-    # SELESAI
-    # ========================================================
-
-    def download_finished(
-        self,
-        df,
-        monthly,
-        source,
-        sheet_title
-    ):
-
-        self._df = df
-        self._monthly = monthly
-        self._source = source
-        self._sheet_title = sheet_title
-
-        self.lbl_status.setText(
-            "Data berhasil diambil. Pilih lokasi penyimpanan..."
-        )
-
-        # ----------------------------------------------------
-        # Nama file
-        # ----------------------------------------------------
-
-        if source == "NASA":
-
-            default_name = (
-                "nasa_rainfall_combined.xlsx"
+        if source_idx == 1:
+            # ==========================================================
+            # CHIRPS
+            # ==========================================================
+            # HANYA bagian ini yang dipindahkan ke background thread.
+            # Request dan pengolahan DataFrame tidak lagi memblokir GUI.
+            self.btn_download.setText(
+                "Sedang mengunduh CHIRPS..."
             )
 
-        else:
-
-            default_name = (
-                "chirps_rainfall_combined.xlsx"
+            self.chirps_thread = QThread(self)
+            self.chirps_worker = CHIRPSDownloadWorker(
+                self.lat,
+                self.lon,
+                start_str,
+                end_str
             )
 
-        filepath, _ = QFileDialog.getSaveFileName(
-            self,
-            "Simpan File Excel",
-            default_name,
-            "Excel Files (*.xlsx)"
-        )
+            self.chirps_worker.moveToThread(
+                self.chirps_thread
+            )
 
-        if not filepath:
+            self.chirps_thread.started.connect(
+                self.chirps_worker.run
+            )
 
-            self.reset_ui()
+            self.chirps_worker.finished.connect(
+                self.on_chirps_finished
+            )
 
+            self.chirps_worker.error.connect(
+                self.on_chirps_error
+            )
+
+            # Setelah worker selesai, thread dihentikan.
+            self.chirps_worker.finished.connect(
+                self.chirps_thread.quit
+            )
+            self.chirps_worker.error.connect(
+                self.chirps_thread.quit
+            )
+
+            self.chirps_thread.finished.connect(
+                self.on_chirps_thread_finished
+            )
+
+            self.chirps_thread.start()
             return
 
-        # ----------------------------------------------------
-        # Simpan
-        # ----------------------------------------------------
-
+        # ==============================================================
+        # NASA POWER
+        # ==============================================================
+        # Jalur NASA tetap seperti sebelumnya.
         try:
+            interval = [
+                "daily",
+                "monthly",
+                "annual"
+            ][self.combo_interval.currentIndex()]
 
-            ClimateDownloadWorker.save_excel(
-                filepath=filepath,
-                df=self._df,
-                monthly=self._monthly,
-                sheet_title=self._sheet_title,
-                source_name=self._source,
-                lat=self.lat,
-                lon=self.lon,
-                start_date=self.date_start.date().toString(
-                    "yyyy-MM-dd"
-                ),
-                end_date=self.date_end.date().toString(
-                    "yyyy-MM-dd"
-                )
+            api_interval = (
+                "daily"
+                if interval == "daily"
+                else interval
             )
 
-            # Cache daily rainfall for the FDC module. This is separate from the
-            # user-selected Excel export and lets FDC compare NASA vs CHIRPS.
-            cache_dir = os.path.abspath("output/climate")
-            os.makedirs(cache_dir, exist_ok=True)
-            cache_name = "nasa_daily.csv" if self._source == "NASA" else "chirps_daily.csv"
-            self._df.to_csv(os.path.join(cache_dir, cache_name), index=False)
+            s_nasa = (
+                self.date_start.date().toString("yyyyMMdd")
+                if api_interval == "daily"
+                else self.date_start.date().toString("yyyy")
+            )
+
+            e_nasa = (
+                self.date_end.date().toString("yyyyMMdd")
+                if api_interval == "daily"
+                else self.date_end.date().toString("yyyy")
+            )
+
+            url = (
+                "https://power.larc.nasa.gov/api/"
+                f"temporal/{api_interval}/point"
+            )
+
+            params = {
+                "parameters": "PRECTOTCORR",
+                "community": "ag",
+                "longitude": self.lon,
+                "latitude": self.lat,
+                "start": s_nasa,
+                "end": e_nasa,
+                "format": "JSON"
+            }
+
+            res = requests.get(
+                url,
+                params=params,
+                timeout=35
+            ).json()
+
+            props = res[
+                "properties"
+            ][
+                "parameter"
+            ][
+                "PRECTOTCORR"
+            ]
+
+            df = pd.DataFrame(
+                list(props.items()),
+                columns=[
+                    "Periode",
+                    "Precipitation (mm)"
+                ]
+            )
+
+            filepath, _ = QFileDialog.getSaveFileName(
+                self,
+                "Simpan File",
+                "nasa_rainfall_combined.xlsx",
+                "Excel Files (*.xlsx)"
+            )
+
+            if not filepath:
+                self.reset_button()
+                return
+
+            with pd.ExcelWriter(
+                filepath,
+                engine="openpyxl"
+            ) as writer:
+
+                df_out = df.copy()
+
+                dt_series = pd.to_datetime(
+                    df_out["Periode"],
+                    format="%Y%m%d",
+                    errors="coerce"
+                )
+
+                if interval == "daily":
+                    df_out["Periode"] = (
+                        dt_series.dt.strftime("%Y-%m-%d")
+                    )
+
+                df_out.to_excel(
+                    writer,
+                    sheet_name="Data NASA",
+                    index=False
+                )
+
+                if interval == "daily":
+                    df_p = df.copy()
+
+                    df_p["Year"] = dt_series.dt.year
+                    df_p["Month"] = dt_series.dt.month
+
+                    pivot = df_p.pivot_table(
+                        index="Year",
+                        columns="Month",
+                        values="Precipitation (mm)",
+                        aggfunc="sum"
+                    )
+
+                    pivot.columns = [
+                        "JAN", "FEB", "MAR", "APR",
+                        "MAY", "JUN", "JUL", "AUG",
+                        "SEP", "OCT", "NOV", "DEC"
+                    ]
+
+                    pivot["ANN"] = pivot.sum(axis=1)
+
+                    pivot.to_excel(
+                        writer,
+                        sheet_name="Data NASA",
+                        startrow=0,
+                        startcol=4
+                    )
 
             QMessageBox.information(
                 self,
                 "Berhasil",
-                "Data berhasil diunduh dan disimpan.\n\n"
-                f"Sumber: {self._source}\n"
-                f"Koordinat:\n"
-                f"Lat: {self.lat:.6f}\n"
-                f"Lon: {self.lon:.6f}\n\n"
-                f"Periode:\n"
-                f"{self.date_start.date().toString('yyyy-MM-dd')}"
-                " sampai "
-                f"{self.date_end.date().toString('yyyy-MM-dd')}\n\n"
-                f"Jumlah data harian: {len(self._df):,}\n\n"
-                f"File:\n{filepath}"
+                f"Data NASA berhasil disimpan di:\n{filepath}"
             )
 
             self.accept()
 
         except Exception as e:
-
             QMessageBox.critical(
                 self,
-                "Gagal Menyimpan",
+                "Error",
                 str(e)
             )
 
-            self.reset_ui()
+        finally:
+            self.reset_button()
 
-    # ========================================================
-    # ERROR
-    # ========================================================
+    @Slot(object, object)
+    def on_chirps_finished(self, df_daily, monthly):
+        """
+        Dipanggil di GUI thread setelah download CHIRPS selesai.
 
-    def download_error(self, message):
+        QFileDialog memang sengaja tetap di GUI thread.
+        """
+        try:
+            self.btn_download.setText(
+                "Memilih lokasi penyimpanan..."
+            )
 
-        self.lbl_status.setText(
-            "Gagal mengambil data."
-        )
+            filepath, _ = QFileDialog.getSaveFileName(
+                self,
+                "Simpan File",
+                "chirps_rekap_climate_engine.xlsx",
+                "Excel Files (*.xlsx)"
+            )
 
+            if not filepath:
+                self.reset_button()
+                return
+
+            self.btn_download.setText(
+                "Menyimpan Excel..."
+            )
+
+            self.save_chirps_excel(
+                filepath,
+                df_daily,
+                monthly
+            )
+
+            QMessageBox.information(
+                self,
+                "Berhasil",
+                "Data CHIRPS berhasil diunduh dan "
+                f"direkap ke:\n{filepath}"
+            )
+
+            self.accept()
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                str(e)
+            )
+
+        finally:
+            self.reset_button()
+
+    @Slot(str)
+    def on_chirps_error(self, err_msg):
         QMessageBox.critical(
             self,
-            "Gagal Mengambil Data",
-            message
+            "Error CHIRPS",
+            err_msg
         )
 
-        self.reset_ui()
+        self.reset_button()
 
-    # ========================================================
-    # THREAD SELESAI
-    # ========================================================
+    @Slot()
+    def on_chirps_thread_finished(self):
+        # Worker/thread hanya dibersihkan setelah QThread benar-benar selesai.
+        if self.chirps_worker is not None:
+            self.chirps_worker.deleteLater()
 
-    def thread_finished(self):
+        if self.chirps_thread is not None:
+            self.chirps_thread.deleteLater()
 
-        if self.thread:
+        self.chirps_worker = None
+        self.chirps_thread = None
 
-            self.thread.deleteLater()
-
-        self.thread = None
-        self.worker = None
-
-    # ========================================================
-    # RESET UI
-    # ========================================================
-
-    def reset_ui(self):
-
-        self.btn_download.setEnabled(
-            True
-        )
-
-        self.combo_source.setEnabled(
-            True
-        )
-
-        self.combo_interval.setEnabled(
-            True
-        )
-
-        self.date_start.setEnabled(
-            True
-        )
-
-        self.date_end.setEnabled(
-            True
-        )
-
+    def reset_button(self):
+        self.btn_download.setEnabled(True)
         self.btn_download.setText(
             "📥 Unduh Otomatis & Simpan (.xlsx)"
         )
 
-        self.lbl_status.setText(
-            "Siap."
-        )
+    def closeEvent(self, event):
+        # Jangan menutup dialog ketika worker masih berjalan.
+        if (
+            self.chirps_thread is not None
+            and self.chirps_thread.isRunning()
+        ):
+            QMessageBox.information(
+                self,
+                "Proses Masih Berjalan",
+                "Download CHIRPS masih berjalan. "
+                "Tunggu sampai selesai."
+            )
+            event.ignore()
+            return
+
+        event.accept()
